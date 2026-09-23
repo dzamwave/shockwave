@@ -34,6 +34,7 @@ class WinVoiceApp:
         
         self.is_recording = False
         self.is_processing = False
+        self._recording_id = 0
         self.lock = threading.Lock()
         
         # 2. Wake Word Detector (Vosk)
@@ -129,12 +130,42 @@ class WinVoiceApp:
                 self.is_processing = True
                 threading.Thread(target=lambda: self.process_audio_thread(is_wake_word=False), daemon=True).start()
 
+    def _recording_watchdog(self, rec_id):
+        warn_seconds = getattr(config, "WARN_RECORD_SECONDS", 150)
+        max_seconds = getattr(config, "MAX_RECORD_SECONDS", 180)
+        warned = False
+        start_time = time.time()
+        
+        while True:
+            time.sleep(0.25)
+            with self.lock:
+                if not self.is_recording or self._recording_id != rec_id:
+                    break
+                
+                elapsed = time.time() - start_time
+                if not warned and elapsed >= warn_seconds:
+                    warned = True
+                    self.q.put({"cmd": "radar_warning"})
+                    
+                if elapsed >= max_seconds:
+                    yellow_auto = "\033[38;2;255;180;50m\033[1m[Auto-Stop]\033[0m"
+                    print(f"\n{yellow_auto} Reached {max_seconds}s limit. Stopping recording automatically...")
+                    self.is_recording = False
+                    self.is_processing = True
+                    threading.Thread(target=lambda: self.process_audio_thread(is_wake_word=False), daemon=True).start()
+                    break
+
     def start_recording_thread(self):
+        with self.lock:
+            self._recording_id += 1
+            rec_id = self._recording_id
+            
         start_time = datetime.now().strftime("%H:%M:%S")
         purple_start = "\033[38;2;180;95;235m\033[1mStarted recording\033[0m"
         print(f"\n{purple_start} {start_time}. ", end="", flush=True)
         self.q.put({"cmd": "show", "text": "record"})
         self.audio.start_recording()
+        threading.Thread(target=lambda: self._recording_watchdog(rec_id), daemon=True).start()
 
     def process_audio_thread(self, is_wake_word=False):
         print("Stopping recording.")

@@ -3,6 +3,7 @@ import queue
 import os
 import sys
 import math
+import time
 import winsound
 import ctypes
 import ctypes.wintypes as wintypes
@@ -124,6 +125,7 @@ class WinVoiceUI:
         self.is_eye_active = False
         self._radar_after_id = None
         self._radar_angle = 0.0
+        self._radar_warning = False
         
         # Square button background & border
         self.matrix_border = self.eye_canvas.create_rectangle(
@@ -224,8 +226,21 @@ class WinVoiceUI:
             cursor="hand2"
         )
 
+        # Countdown timer (visible only during recording)
+        self.countdown_label = tk.Label(
+            self.header_frame,
+            text="",
+            bg=self.COLOR_BG,
+            fg="#FFFFFF",
+            font=("Segoe UI", 9),
+            anchor="w"
+        )
+        self._countdown_after_id = None
+        self._countdown_end_time = 0.0
+
         def on_cancel_click(event=None):
             self.stop_radar()
+            self.stop_countdown()
             if self.on_cancel:
                 self.on_cancel()
             else:
@@ -392,7 +407,7 @@ class WinVoiceUI:
         self.close_btn.bind("<Enter>", lambda e: self.close_btn.config(fg="#ff5555"))
         self.close_btn.bind("<Leave>", lambda e: self.close_btn.config(fg=self.COLOR_MUTED))
         # Bind dragging to all container frames and background labels for seamless whole-bar moving
-        for bg_widget in (self.root, self.eye_frame, self.right_frame, self.header_frame, self.label, self.controls_frame):
+        for bg_widget in (self.root, self.eye_frame, self.right_frame, self.header_frame, self.label, self.countdown_label, self.controls_frame):
             self.make_draggable(bg_widget)
             
         screen_width = self.root.winfo_screenwidth()
@@ -453,6 +468,7 @@ class WinVoiceUI:
         """Starts the rotating radar sweep animation with trailing fade across the dot matrix."""
         self.stop_radar()
         self.is_eye_active = True
+        self._radar_warning = False
         self._radar_angle = 0.0
         self.eye_canvas.itemconfig(
             self.matrix_border,
@@ -461,49 +477,123 @@ class WinVoiceUI:
         )
         self._radar_tick()
 
+    def set_radar_warning(self, is_warning: bool = True):
+        """Switches radar into flashing red warning state."""
+        self._radar_warning = is_warning
+
     def _radar_tick(self):
         """Calculates beam angle and interpolates dot brightness with trail decay."""
         # 35ms interval (~28 FPS), advance by 0.16 rad per tick (~1.37s per full 360 deg sweep)
         self._radar_angle = (self._radar_angle + 0.16) % (2 * math.pi)
         trail_span = 1.25 * math.pi  # ~225 degrees trail length
         
-        for dot in self.matrix_dots:
-            if dot["is_center"]:
-                # Center core dot glows bright gold as the radar axis
-                self.eye_canvas.itemconfig(dot["id"], fill="#FFD700")
-                continue
-                
-            diff = (self._radar_angle - dot["angle"]) % (2 * math.pi)
-            if diff <= trail_span:
-                factor = 1.0 - (diff / trail_span)
-                intensity = factor ** 1.3
-                
-                if intensity > 0.7:
-                    t = (intensity - 0.7) / 0.3
-                    r = 255
-                    g = int(215 + (250 - 215) * t)
-                    b = int(0 + (175 - 0) * t)
-                else:
-                    t = intensity / 0.7
-                    r = int(68 + (255 - 68) * t)
-                    g = int(46 + (215 - 46) * t)
-                    b = int(86 + (0 - 86) * t)
+        if self._radar_warning:
+            # Flashing red beacon (~3.5 Hz)
+            is_bright = (int(time.time() * 3.5) % 2) == 0
+            border_col = "#FF2222" if is_bright else "#551122"
+            center_col = "#FF2222" if is_bright else "#551122"
+            self.eye_canvas.itemconfig(self.matrix_border, outline=border_col)
+            
+            for dot in self.matrix_dots:
+                if dot["is_center"]:
+                    self.eye_canvas.itemconfig(dot["id"], fill=center_col)
+                    continue
                     
-                hex_color = f"#{r:02x}{g:02x}{b:02x}"
-                self.eye_canvas.itemconfig(dot["id"], fill=hex_color)
-            else:
-                self.eye_canvas.itemconfig(dot["id"], fill=self.COLOR_DOT_INACTIVE)
+                diff = (self._radar_angle - dot["angle"]) % (2 * math.pi)
+                if diff <= trail_span:
+                    factor = 1.0 - (diff / trail_span)
+                    intensity = factor ** 1.3
+                    if is_bright:
+                        r = 255
+                        g = int(40 * (1.0 - intensity))
+                        b = int(40 * (1.0 - intensity))
+                    else:
+                        r = int(90 * intensity)
+                        g = 15
+                        b = 25
+                    hex_color = f"#{r:02x}{g:02x}{b:02x}"
+                    self.eye_canvas.itemconfig(dot["id"], fill=hex_color)
+                else:
+                    self.eye_canvas.itemconfig(dot["id"], fill=self.COLOR_DOT_INACTIVE)
+        else:
+            self.eye_canvas.itemconfig(self.matrix_border, outline=self.COLOR_ACTIVE_OUTLINE)
+            for dot in self.matrix_dots:
+                if dot["is_center"]:
+                    # Center core dot glows bright gold as the radar axis
+                    self.eye_canvas.itemconfig(dot["id"], fill="#FFD700")
+                    continue
+                    
+                diff = (self._radar_angle - dot["angle"]) % (2 * math.pi)
+                if diff <= trail_span:
+                    factor = 1.0 - (diff / trail_span)
+                    intensity = factor ** 1.3
+                    
+                    if intensity > 0.7:
+                        t = (intensity - 0.7) / 0.3
+                        r = 255
+                        g = int(215 + (250 - 215) * t)
+                        b = int(0 + (175 - 0) * t)
+                    else:
+                        t = intensity / 0.7
+                        r = int(68 + (255 - 68) * t)
+                        g = int(46 + (215 - 46) * t)
+                        b = int(86 + (0 - 86) * t)
+                        
+                    hex_color = f"#{r:02x}{g:02x}{b:02x}"
+                    self.eye_canvas.itemconfig(dot["id"], fill=hex_color)
+                else:
+                    self.eye_canvas.itemconfig(dot["id"], fill=self.COLOR_DOT_INACTIVE)
                 
         self._radar_after_id = self.root.after(35, self._radar_tick)
 
     def stop_radar(self):
         """Stops the radar animation and cancels any scheduled timer."""
+        self._radar_warning = False
         if self._radar_after_id:
             try:
                 self.root.after_cancel(self._radar_after_id)
             except Exception:
                 pass
             self._radar_after_id = None
+
+    def start_countdown(self, total_seconds=None):
+        """Initializes and runs countdown timer display."""
+        if self._countdown_after_id:
+            try:
+                self.root.after_cancel(self._countdown_after_id)
+            except Exception:
+                pass
+            self._countdown_after_id = None
+        if total_seconds is None:
+            total_seconds = getattr(config, "MAX_RECORD_SECONDS", 180)
+        self._countdown_end_time = time.time() + float(total_seconds)
+        self._update_countdown()
+        self.countdown_label.pack(side="left", padx=(12, 0))
+        self._countdown_tick()
+
+    def _update_countdown(self):
+        remaining = max(0, int(math.ceil(self._countdown_end_time - time.time())))
+        mins = remaining // 60
+        secs = remaining % 60
+        self.countdown_label.config(text=f"{mins:02d}:{secs:02d}")
+        return remaining
+
+    def _countdown_tick(self):
+        remaining = self._update_countdown()
+        if remaining > 0:
+            self._countdown_after_id = self.root.after(250, self._countdown_tick)
+        else:
+            self._countdown_after_id = None
+
+    def stop_countdown(self):
+        """Cancels running countdown timer and removes the label."""
+        if self._countdown_after_id:
+            try:
+                self.root.after_cancel(self._countdown_after_id)
+            except Exception:
+                pass
+            self._countdown_after_id = None
+        self.countdown_label.pack_forget()
 
     def get_window_hwnd(self):
         try:
@@ -567,6 +657,7 @@ class WinVoiceUI:
 
     def reset_to_idle(self):
         self.stop_radar()
+        self.stop_countdown()
         self.label.config(text=self.idle_text)
         self.cancel_btn.pack_forget()
         self.set_eye_active(False)
@@ -588,12 +679,15 @@ class WinVoiceUI:
                     
                     if txt == "record":
                         self.cancel_btn.pack(side="left", padx=(10, 0))
+                        self.start_countdown()
                         self.start_radar()
                     elif txt in ["processing", "normalization"]:
                         self.cancel_btn.pack_forget()
+                        self.stop_countdown()
                         self.set_eye_active(True)
                     else:
                         self.cancel_btn.pack_forget()
+                        self.stop_countdown()
                         self.set_eye_active(False)
                     
                 elif cmd == "show_ready":
@@ -601,6 +695,7 @@ class WinVoiceUI:
                         self.root.after_cancel(self.reset_id)
                     self.label.config(text="ready")
                     self.cancel_btn.pack_forget()
+                    self.stop_countdown()
                     
                     # Becomes inactive on ready
                     self.set_eye_active(False)
@@ -614,6 +709,8 @@ class WinVoiceUI:
                     
                 elif cmd == "show_topmost":
                     self.show_window(play_sound=False)
+                elif cmd == "radar_warning":
+                    self.set_radar_warning(True)
                 elif cmd == "quit":
                     self.root.quit()
                     return

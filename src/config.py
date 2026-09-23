@@ -118,12 +118,14 @@ GIGAAM_QUANTIZATION = get_setting("Recognition", "gigaam_quantization", "GIGAAM_
 
 WAKE_WORD_ENABLED = get_bool("Toggles", "wake", "WAKE_WORD_ENABLED", default=get_bool("Recognition", "wake_word_enabled", "WAKE_WORD_ENABLED", default=True))
 WAKE_WORD = get_setting("Recognition", "wake_word", "WAKE_WORD", default="мега")
+MAX_RECORD_SECONDS = get_int("Recognition", "max_record_seconds", "MAX_RECORD_SECONDS", default=180)
+WARN_RECORD_SECONDS = get_int("Recognition", "warn_record_seconds", "WARN_RECORD_SECONDS", default=150)
 VOSK_MODEL_PATH = os.getenv("VOSK_MODEL_PATH", VOSK_DIR)
 VOSK_MODEL_URL = os.getenv("VOSK_MODEL_URL", "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip")
 
 # --- Interface & Hotkeys ---
 APP_LANGUAGE = get_setting("Interface", "language", "APP_LANGUAGE", default="ru")
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 HOTKEY = get_setting("Interface", "hotkey", "HOTKEY", default="ctrl+space")
 UI_POSITION = get_setting("Interface", "position", "UI_POSITION", default="bottom-right")
 UI_OPACITY = get_float("Interface", "opacity", "UI_OPACITY", default=0.85)
