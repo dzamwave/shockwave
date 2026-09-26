@@ -19,7 +19,8 @@
 ## Features
 * **Hands-Free Wake Word (Vosk):** Fully voice-driven recording. Say your wake word (default: *"Мегатрон"*) to start recording, and say it again to stop. The keyword is automatically trimmed from the end of the audio. Wake word is fully customizable in the launcher settings!
 * **Rock-Solid System Hotkey:** Native Win32 `RegisterHotKey` (Default `Ctrl + Space`). Never drops out after system sleep, lock screen, or long background sessions.
-* **Dynamic Dot-Matrix Radar:** Sleek 32×32 px square button with a 5×5 LED micro-pixel matrix featuring a real-time rotating radar sweep and glowing trail during active recording. Click-to-record supported!
+* **Dynamic Dot-Matrix Radar & Flashing Alert:** Sleek 32×32 px square button with a 5×5 LED micro-pixel matrix featuring a real-time rotating radar sweep and glowing trail during active recording. At 02:30, the radar switches to a flashing red beacon mode to signal approaching time limits. Click-to-record supported!
+* **Live Countdown Timer & Auto-Stop:** Displays remaining recording time (`03:00` → `00:00`) directly on the floating widget next to the `cancel` button. Automatically finalizes recording and submits it to STT at 3 minutes (`max_record_seconds = 180`), protecting ONNX acoustic models from tensor and buffer overflow.
 * **Widget Quick Toggles:** Floating toolbar switches arranged in a 2-row × 3-column grid (`LLM norm`, `AI task`, `to EN`, `wake`, `alert`, `clip+`).
 * **AI Task Prompt Generator (`AI task`):** Transforms conversational stream-of-consciousness speech into structured, crystal-clear instructions/prompts for LLMs without chit-chat or filler words.
 * **Instant English Translation (`to EN`):** Translates dictated speech directly into natural English with technical term preservation and punctuation restoration.
@@ -58,7 +59,8 @@ Detailed guides are available below:
 ## Возможности
 * **Голосовая активация без рук (Hands-Free на базе Vosk):** Управляйте записью только голосом. Произнесите кодовое слово (по умолчанию *«Мегатрон»*) для старта, и повторите его для завершения. Стоп-слово автоматически вырезается из конца записи. Кодовое слово можно свободно сменить в меню лаунчера!
 * **Надёжная системная горячая клавиша:** Работает через ядро Windows (`RegisterHotKey`, по умолчанию `Ctrl + Space`). Никогда не отваливается после сна или блокировки экрана.
-* **Интерактивный матричный радар (Dot-Matrix Radar):** Стильная кнопка 32×32 px со светодиодной матрицей 5×5 пикселей и плавной 28 FPS анимацией вращающегося луча радара во время записи. Поддерживает запуск диктовки кликом мыши!
+* **Интерактивный матричный радар с индикацией тревоги:** Стильная кнопка 32×32 px со светодиодной матрицей 5×5 пикселей и плавной 28 FPS анимацией вращающегося луча радара во время записи. На отметке 02:30 радар начинает пульсировать ярко-красным светом, предупреждая о скором лимите времени без звуковых помех. Поддерживает запуск диктовки кликом мыши!
+* **Таймер обратного отсчета и автостоп:** В режиме записи рядом с кнопкой `cancel` отображается точный обратный отсчет (`03:00` → `00:00`). По истечении 3 минут (`max_record_seconds = 180`) запись автоматически завершается и передается на распознавание, предотвращая переполнение буфера нейросетей ONNX.
 * **Быстрые тумблеры на виджете:** Удобная сетка переключателей в 2 ряда по 3 кнопки: `LLM norm`, `AI task`, `to EN`, `wake`, `alert` и `clip+`.
 * **Генератор инструкций для AI (`AI task`):** Превращает устный поток мыслей в чёткие, структурированные промпты для нейросетей без лишних разговорных междометий и слов-паразитов.
 * **Мгновенный перевод на английский (`to EN`):** Переводит надиктованную речь на естественный английский язык с сохранением технической терминологии и знаков препинания.
