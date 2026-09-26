@@ -4,7 +4,7 @@
 
 # Shockwave
 
-*(Описание на русском ниже)*
+*([Описание на русском ниже](#ru))*
 
 **Shockwave** is an open-source, local-first background voice dictation tool for Windows. It allows you to dictate text completely hands-free via a customizable wake word (powered by Vosk), via a global hotkey, or by clicking the interactive radar button. It automatically normalizes punctuation and tech terminology using an LLM and types/copies the resulting text directly to your focused window.
 
@@ -43,8 +43,11 @@ Detailed guides are available below:
 🇷🇺 **[Руководство по настройке (Русский)](docs/shockwave_setup_guide_rus.md)**
 
 ---
-
+ 
+<a id="ru"></a>
 # Shockwave
+
+*([English version above](#shockwave))*
 
 **Shockwave** — это легковесный инструмент для голосовой диктовки на Windows, работающий в фоновом режиме. Он позволяет надиктовывать текст полностью без рук с помощью кодового слова (на базе Vosk), по нажатию глобальной горячей клавиши или клику по интерактивной радарной кнопке на панели, автоматически расставляет знаки препинания с помощью нейросети и копирует/вставляет результат прямо в активное окно.
 
