@@ -38,6 +38,9 @@ def get_env_path():
         parent_env = os.path.abspath(os.path.join(exe_dir, "..", ".env"))
         if os.path.exists(parent_env):
             return parent_env
+        root_env = os.path.abspath(os.path.join(exe_dir, "..", "..", ".env"))
+        if os.path.exists(root_env):
+            return root_env
         return cwd_env
         
     root_dir = os.path.abspath(os.path.join(current_dir, ".."))

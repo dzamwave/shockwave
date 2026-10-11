@@ -15,6 +15,7 @@ def _find_file(filename: str) -> str:
         exe_dir = os.path.dirname(sys.executable)
         candidates.append(os.path.join(exe_dir, filename))
         candidates.append(os.path.abspath(os.path.join(exe_dir, "..", filename)))
+        candidates.append(os.path.abspath(os.path.join(exe_dir, "..", "..", filename)))
     else:
         root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         candidates.append(os.path.join(root_dir, filename))
@@ -37,6 +38,8 @@ if getattr(sys, 'frozen', False):
         MODELS_DIR = os.path.join(exe_dir, "models")
     elif os.path.exists(os.path.abspath(os.path.join(exe_dir, "..", "models"))):
         MODELS_DIR = os.path.abspath(os.path.join(exe_dir, "..", "models"))
+    elif os.path.exists(os.path.abspath(os.path.join(exe_dir, "..", "..", "models"))):
+        MODELS_DIR = os.path.abspath(os.path.join(exe_dir, "..", "..", "models"))
     else:
         MODELS_DIR = os.path.join(exe_dir, "models")
 else:
@@ -120,6 +123,8 @@ WAKE_WORD_ENABLED = get_bool("Toggles", "wake", "WAKE_WORD_ENABLED", default=get
 WAKE_WORD = get_setting("Recognition", "wake_word", "WAKE_WORD", default="мега")
 MAX_RECORD_SECONDS = get_int("Recognition", "max_record_seconds", "MAX_RECORD_SECONDS", default=180)
 WARN_RECORD_SECONDS = get_int("Recognition", "warn_record_seconds", "WARN_RECORD_SECONDS", default=150)
+MODEL_IDLE_TIMEOUT = get_int("Recognition", "model_idle_timeout", "MODEL_IDLE_TIMEOUT", default=300)
+ONNX_OPTIMIZE_MEMORY = get_bool("Recognition", "onnx_optimize_memory", "ONNX_OPTIMIZE_MEMORY", default=True)
 VOSK_MODEL_PATH = os.getenv("VOSK_MODEL_PATH", VOSK_DIR)
 VOSK_MODEL_URL = os.getenv("VOSK_MODEL_URL", "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip")
 

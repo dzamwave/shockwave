@@ -9,6 +9,12 @@ import sounddevice as sd
 import numpy as np
 
 try:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+try:
     import vosk
 except ImportError:
     vosk = None
@@ -97,9 +103,11 @@ class WakeWordDetector:
         self._lock = threading.Lock()
         self._audio_q = queue.Queue()
         
-        self._init_model()
+        # Deferred loading: Vosk model is loaded only when enable() / start_mic() is invoked.
 
     def _init_model(self):
+        if self.model and self.recognizer:
+            return
         if not vosk:
             print("[WakeWord] Error: Vosk library is not installed.")
             return
@@ -236,12 +244,31 @@ class WakeWordDetector:
     def enable(self):
         """Enables wake word detection and starts listening."""
         self._is_enabled = True
-        self.start_mic()
+        threading.Thread(target=self.start_mic, daemon=True).start()
+
+    def unload_model(self):
+        """Unloads Vosk model and recognizer from memory and releases OS pages."""
+        with self._lock:
+            if self.model is None and self.recognizer is None:
+                return
+            print("[WakeWord] Unloading Vosk model from memory...")
+            self.recognizer = None
+            self.model = None
+            import gc
+            gc.collect()
+            try:
+                import ctypes
+                h_proc = ctypes.windll.kernel32.GetCurrentProcess()
+                ctypes.windll.psapi.EmptyWorkingSet(h_proc)
+            except Exception:
+                pass
+            print("[WakeWord] Vosk model unloaded successfully. Memory freed.")
 
     def disable(self):
-        """Disables wake word detection and closes microphone stream."""
+        """Disables wake word detection, closes microphone stream, and unloads model."""
         self._is_enabled = False
         self.pause_mic()
+        self.unload_model()
 
     def is_enabled(self):
         return self._is_enabled

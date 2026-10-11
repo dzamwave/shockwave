@@ -3,7 +3,9 @@ import subprocess
 from pathlib import Path
 
 root = str(Path.cwd().resolve())
-exe = os.path.join(root, "dist", "Shockwave.exe")
+candidate_onedir = os.path.join(root, "dist", "Shockwave", "Shockwave.exe")
+candidate_onefile = os.path.join(root, "dist", "Shockwave.exe")
+exe = candidate_onedir if os.path.exists(candidate_onedir) else candidate_onefile
 ico = os.path.join(root, "icons", "icon.ico,0")
 s1_path = os.path.join(root, "Shockwave.lnk")
 s2_path = os.path.join(root, "Shockwave-Widget.lnk")

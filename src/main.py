@@ -53,6 +53,8 @@ class WinVoiceApp:
         # Activate wake word listener if enabled in settings
         if self.ui.wake_enabled:
             self.wake_detector.enable()
+        else:
+            print("[Shockwave] Wake word detection is disabled in config. Vosk model not loaded.")
         
         # 3. System Tray Manager: Place Shockwave icon next to clock with toggle & exit menu
         icon_path = get_resource_path(os.path.join("icons", "icon.ico"))
@@ -68,7 +70,10 @@ class WinVoiceApp:
         self.hotkey_mgr = SystemHotkeyManager(config.HOTKEY, self.toggle_recording)
         yellow_radar = "\033[38;2;255;215;0m\033[1mRadar\033[0m"
         wake_keyword = getattr(config, "WAKE_WORD", "мегатрон")
-        print(f"Shockwave started. Press {config.HOTKEY.upper()}, click {yellow_radar} or say '{wake_keyword.capitalize()}' to record.")
+        if self.ui.wake_enabled:
+            print(f"Shockwave started. Press {config.HOTKEY.upper()}, click {yellow_radar} or say '{wake_keyword.capitalize()}' to record.")
+        else:
+            print(f"Shockwave started. Press {config.HOTKEY.upper()} or click {yellow_radar} to record (Wake word disabled).")
         
         # Hide console window to system tray smoothly
         hide_console()
@@ -220,7 +225,10 @@ class WinVoiceApp:
             self.tray.stop()
         if hasattr(self, 'hotkey_mgr'):
             self.hotkey_mgr.stop()
-        self.audio.stop_recording()
+        if hasattr(self, 'audio'):
+            self.audio.cleanup()
+        else:
+            self.audio.stop_recording()
         if os.path.exists(config.AUDIO_TEMP_FILE):
             try:
                 os.remove(config.AUDIO_TEMP_FILE)
