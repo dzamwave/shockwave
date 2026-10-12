@@ -26,7 +26,7 @@ class AudioEngine:
         self.is_recording = False
         self.on_audio_chunk = None
         
-        self.engine_type = (os.getenv("STT_ENGINE") or config.STT_ENGINE).lower()
+        self.engine_type = config.STT_ENGINE.lower()
         self.model = None
         self._model_lock = threading.Lock()
         self._is_loading_model = False
@@ -47,7 +47,7 @@ class AudioEngine:
             if self.model is not None:
                 return self.model
                 
-            self.engine_type = (os.getenv("STT_ENGINE") or config.STT_ENGINE).lower()
+            self.engine_type = config.STT_ENGINE.lower()
             print(f"\n[AudioEngine] Loading STT model ({self.engine_type}) into memory...")
             start_t = time.time()
             
@@ -55,7 +55,7 @@ class AudioEngine:
                 try:
                     import onnx_asr
                     model_name = config.GIGAAM_MODEL
-                    quant = config.GIGAAM_QUANTIZATION if config.GIGAAM_QUANTIZATION else None
+                    quant = None if config.GIGAAM_QUANTIZATION in ("", "float32") else config.GIGAAM_QUANTIZATION
                     gigaam_path = config.GIGAAM_MODEL_PATH if config.GIGAAM_MODEL_PATH else config.GIGAAM_DIR
                     
                     sess_options = None
@@ -155,24 +155,54 @@ class AudioEngine:
                 self.on_audio_chunk(indata)
 
     def start_recording(self):
+        # Retain and retry any stream whose previous close failed; never lose
+        # its handle by replacing it with another microphone stream.
+        self.is_recording = False
+        self._close_stream()
         # Asynchronously load/warm up STT model during speech to avoid post-recording latency
         self.preload_model_async()
         self.audio_data = []
         self.is_recording = True
-        self.stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            channels=1,
-            dtype='float32',
-            callback=self._audio_callback
-        )
-        self.stream.start()
+        try:
+            self.stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype='float32',
+                callback=self._audio_callback
+            )
+            self.stream.start()
+        except Exception:
+            self.is_recording = False
+            try:
+                self._close_stream()
+            except Exception as e:
+                print(f"[AudioEngine] Cleanup after start failure: {e}")
+            self.audio_data = []
+            raise
+
+    def _close_stream(self):
+        """Always attempt close, even when stop fails; preserve the first error."""
+        stream = self.stream
+        if stream is None:
+            return
+        error = None
+        try:
+            stream.stop()
+        except Exception as e:
+            error = e
+        try:
+            stream.close()
+        except Exception as e:
+            if error is None:
+                error = e
+        else:
+            self.stream = None
+        if error is not None:
+            raise error
 
     def stop_recording(self, trim_seconds=0.0):
-        if self.stream:
-            self.is_recording = False
-            self.stream.stop()
-            self.stream.close()
-            self.stream = None
+        self.is_recording = False
+        self._close_stream()
             
         if trim_seconds > 0.0 and self.audio_data:
             samples_to_trim = int(trim_seconds * self.sample_rate)
@@ -185,15 +215,11 @@ class AudioEngine:
     def cancel_recording(self):
         """Immediately stops the stream and flushes all audio buffers without saving."""
         self.is_recording = False
-        if self.stream:
-            try:
-                self.stream.stop()
-                self.stream.close()
-            except Exception:
-                pass
-            self.stream = None
-        self.audio_data = []
-        self._last_used_time = time.time()
+        try:
+            self._close_stream()
+        finally:
+            self.audio_data = []
+            self._last_used_time = time.time()
         print("Recording cancelled and audio buffer discarded.")
 
     def transcribe(self) -> str:
@@ -227,7 +253,7 @@ class AudioEngine:
                 
             else:
                 # faster-whisper processing
-                whisper_lang = os.getenv("WHISPER_LANGUAGE", config.WHISPER_LANGUAGE)
+                whisper_lang = config.WHISPER_LANGUAGE
                 if whisper_lang:
                     whisper_lang = whisper_lang.strip().lower()
                     if whisper_lang in ["auto", "none", ""]:
@@ -248,5 +274,7 @@ class AudioEngine:
     def cleanup(self):
         """Stops background watchdog, halts recording, and unloads model."""
         self._stop_watchdog = True
-        self.stop_recording()
-        self.unload_model()
+        try:
+            self.cancel_recording()
+        finally:
+            self.unload_model()

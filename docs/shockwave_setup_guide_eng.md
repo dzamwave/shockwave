@@ -53,16 +53,24 @@ pip install -r requirements.txt
 | **OpenRouter** | `https://openrouter.ai/api/v1/chat/completions` | `google/gemini-2.5-flash-lite` | [openrouter.ai](https://openrouter.ai/) |
 | **Ollama (Local)** | `http://localhost:11434/v1/chat/completions` | `qwen2.5:7b` | Not needed (offline) |
 
+External LLM servers require HTTPS. HTTP is allowed only for `localhost` and loopback addresses (`127.0.0.1`, `::1`) on this computer; another computer's HTTP address on the local network is not allowed. Automatic redirects are disabled: use the final API URL. Rejected URLs preserve the original transcript.
+
+If LLM processing fails or returns empty or truncated text, the transcript from before LLM processing is copied to the clipboard and the widget shows `LLM failed: original saved` instead of `ready`. A successful response must contain nonempty text and confirm completion with `finish_reason: stop`; services without that confirmation also fall back to the transcript. If glossary processing fails, text from before substitutions is copied and further LLM processing is skipped. "Saved" means copied to the clipboard, rather than written to a separate file.
+
 ---
 
-## 🎛️ Configuration via `.env`
+## 🎛️ Configuration via `config.ini`
 
-Parameters can be configured in `.env` (template available in `.env.example`):
-* `HOTKEY=ctrl+space` — global system hotkey.
-* `WHISPER_LANGUAGE=ru` — Whisper recognition language (`ru`, `auto` for 99 languages, `en`, `de`, etc.).
-* `UI_POSITION=bottom-left` — initial widget position (`bottom-left`, `bottom-right`, `top-center`).
-* `UI_OPACITY=0.80` — widget opacity (`0.1` to `1.0`).
-* `ALERT_SOUND=true` — sound chimes and startup Megatron quote (`true` or `false`).
+User preferences belong in `config.ini` (template: `config.ini.example`). Engine, wake word and language choices made in the menu are saved here. Legacy `.env` preferences remain a fallback when the corresponding setting is absent from `config.ini`. The API key and LLM connection settings remain in `.env`.
+
+* `[Interface] hotkey = ctrl+space` — global system hotkey.
+* `[Recognition] whisper_language = ru` — Whisper language (`ru`, `auto`, `en`, etc.).
+* `[Recognition] gigaam_quantization = int8` — compressed model; `float32` selects full precision. Matching model files must be downloaded.
+* `[Interface] position = bottom-left` — initial widget position.
+* `[Interface] opacity = 0.80` — widget opacity.
+* `[Toggles] alert_sound = true` — sound notifications.
+
+Write each bracketed section heading on its own line, followed by its settings, as shown in the template. An empty Vosk folder, including one containing only `.gitkeep`, is populated automatically. An incomplete folder containing other files is reported and preserved.
 
 #### Recommended Hotkeys:
 * ✅ **Recommended:** `ctrl+space`, `alt+space`, `f9`, `f8`, `f10`, `pause`.
@@ -78,4 +86,5 @@ Parameters can be configured in `.env` (template available in `.env.example`):
 * **`alert` checkbox:** Toggle audio chime notification and startup voice clip.
 * **System Tray Icon (near clock):** Double-click to show/hide the console; right-click for quick control menu.
 * **Single Instance Protection:** Duplicate launches are automatically prevented without wasting resources.
+* **Stopping with the wake word:** All audio is preserved. Only the recognized wake word at the end of the transcript is removed. If recognition does not find it at the end, the transcript is kept unchanged and may still contain the wake word.
 * **`×` button:** Exit application.

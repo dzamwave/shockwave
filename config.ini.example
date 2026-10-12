@@ -17,6 +17,7 @@ engine = gigaam
 whisper_model = large-v3-turbo
 whisper_language = ru
 gigaam_model = gigaam-v3-e2e-rnnt
+# int8 = compressed model; float32 = full precision (requires matching model files).
 gigaam_quantization = int8
 wake_word = мега
 max_record_seconds = 180

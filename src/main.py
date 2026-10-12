@@ -3,6 +3,7 @@ import queue
 import time
 import sys
 import os
+import re
 from datetime import datetime
 
 import config
@@ -36,6 +37,9 @@ class WinVoiceApp:
         self.is_processing = False
         self._recording_id = 0
         self.lock = threading.Lock()
+        # Device operations may wait for callbacks; never hold the state lock there.
+        self._audio_lock = threading.RLock()
+        self._shutting_down = False
         
         # 2. Wake Word Detector (Vosk)
         self.wake_detector = WakeWordDetector(on_wake_callback=self.on_wake_trigger)
@@ -85,29 +89,18 @@ class WinVoiceApp:
     def on_toggle_wake(self, is_enabled):
         if is_enabled:
             print("[Shockwave] Wake word detection enabled.")
-            self.wake_detector.enable()
+            with self._audio_lock:
+                with self.lock:
+                    busy = self.is_recording or self.is_processing or self._shutting_down
+                self.wake_detector.enable(start_mic=not busy)
         else:
             print("[Shockwave] Wake word detection disabled.")
-            self.wake_detector.disable()
+            with self._audio_lock:
+                self.wake_detector.disable()
 
     def on_wake_trigger(self):
         """Called automatically when the wake word ('Мегатрон') is detected."""
-        with self.lock:
-            if self.is_processing:
-                return
-                
-            if not self.is_recording:
-                # First 'Мегатрон': start voice recording
-                self.is_recording = True
-                self.wake_detector.pause_mic()
-                if self.ui.alert_enabled:
-                    play_ready_sound()
-                threading.Thread(target=self.start_recording_thread, daemon=True).start()
-            else:
-                # Second 'Мегатрон': stop recording with wake word trimming
-                self.is_recording = False
-                self.is_processing = True
-                threading.Thread(target=lambda: self.process_audio_thread(is_wake_word=True), daemon=True).start()
+        self._toggle_recording(is_wake_word=True)
 
     def cancel_recording(self):
         """Discards active recording immediately and resets UI state."""
@@ -116,38 +109,63 @@ class WinVoiceApp:
                 return
             print("Cancelling recording upon user request...")
             self.is_recording = False
-            self.is_processing = False
-            self.audio.cancel_recording()
-            self.wake_detector.resume_mic()
+            self.is_processing = True
+            # Invalidate the start worker before waiting for device cleanup.
+            self._recording_id += 1
+            rec_id = self._recording_id
+            self.q.put({"cmd": "show", "text": "cancelling"})
+        threading.Thread(target=self._cancel_recording_thread, args=(rec_id,), daemon=True).start()
+
+    def _cancel_recording_thread(self, rec_id):
+        try:
+            with self._audio_lock:
+                self.audio.cancel_recording()
             self.q.put({"cmd": "show", "text": "what is your command?"})
+        except Exception as e:
+            self._report_error("cancel", e)
+        finally:
+            self._finish_recording(rec_id)
 
     def toggle_recording(self):
+        self._toggle_recording(is_wake_word=False)
+
+    def _toggle_recording(self, is_wake_word):
         with self.lock:
-            if self.is_processing:
+            if self.is_processing or self._shutting_down:
                 return
                 
             if not self.is_recording:
                 self.is_recording = True
-                self.wake_detector.pause_mic()
-                threading.Thread(target=self.start_recording_thread, daemon=True).start()
+                self._recording_id += 1
+                rec_id = self._recording_id
+                self.q.put({"cmd": "show", "text": "record"})
+                worker = threading.Thread(
+                    target=self.start_recording_thread,
+                    args=(rec_id, is_wake_word), daemon=True
+                )
             else:
                 self.is_recording = False
                 self.is_processing = True
-                threading.Thread(target=lambda: self.process_audio_thread(is_wake_word=False), daemon=True).start()
+                rec_id = self._recording_id
+                worker = threading.Thread(
+                    target=self.process_audio_thread,
+                    kwargs={"is_wake_word": is_wake_word, "rec_id": rec_id}, daemon=True
+                )
+        worker.start()
 
     def _recording_watchdog(self, rec_id):
         warn_seconds = getattr(config, "WARN_RECORD_SECONDS", 150)
         max_seconds = getattr(config, "MAX_RECORD_SECONDS", 180)
         warned = False
-        start_time = time.time()
+        start_time = time.monotonic()
         
         while True:
             time.sleep(0.25)
             with self.lock:
-                if not self.is_recording or self._recording_id != rec_id:
+                if not self.is_recording or self._recording_id != rec_id or self._shutting_down:
                     break
                 
-                elapsed = time.time() - start_time
+                elapsed = time.monotonic() - start_time
                 if not warned and elapsed >= warn_seconds:
                     warned = True
                     self.q.put({"cmd": "radar_warning"})
@@ -157,33 +175,104 @@ class WinVoiceApp:
                     print(f"\n{yellow_auto} Reached {max_seconds}s limit. Stopping recording automatically...")
                     self.is_recording = False
                     self.is_processing = True
-                    threading.Thread(target=lambda: self.process_audio_thread(is_wake_word=False), daemon=True).start()
+                    threading.Thread(
+                        target=self.process_audio_thread,
+                        kwargs={"rec_id": rec_id}, daemon=True
+                    ).start()
                     break
 
-    def start_recording_thread(self):
-        with self.lock:
-            self._recording_id += 1
-            rec_id = self._recording_id
-            
-        start_time = datetime.now().strftime("%H:%M:%S")
-        purple_start = "\033[38;2;180;95;235m\033[1mStarted recording\033[0m"
-        print(f"\n{purple_start} {start_time}. ", end="", flush=True)
-        self.q.put({"cmd": "show", "text": "record"})
-        self.audio.start_recording()
-        threading.Thread(target=lambda: self._recording_watchdog(rec_id), daemon=True).start()
+    def start_recording_thread(self, rec_id, is_wake_word=False):
+        try:
+            with self._audio_lock:
+                with self.lock:
+                    if self._recording_id != rec_id or not self.is_recording or self._shutting_down:
+                        return
+                self.wake_detector.pause_mic()
+                if is_wake_word and self.ui.alert_enabled:
+                    play_ready_sound()
+                start_time = datetime.now().strftime("%H:%M:%S")
+                print(f"\nStarted recording {start_time}. ", end="", flush=True)
+                self.audio.start_recording()
+                with self.lock:
+                    still_recording = (
+                        self._recording_id == rec_id and self.is_recording and not self._shutting_down
+                    )
+                if not still_recording:
+                    self.audio.cancel_recording()
+                    return
+            threading.Thread(target=self._recording_watchdog, args=(rec_id,), daemon=True).start()
+        except Exception as e:
+            self._report_error("microphone", e, rec_id)
+            self._finish_recording(rec_id)
 
-    def process_audio_thread(self, is_wake_word=False):
+    def _report_error(self, stage, error, rec_id=None):
+        print(f"[Shockwave] {stage} error: {error}")
+        with self.lock:
+            if not self._shutting_down and (rec_id is None or self._recording_id == rec_id):
+                self.q.put({"cmd": "show", "text": f"error: {stage}"})
+
+    def _finish_recording(self, rec_id):
+        # Keep processing=True until device restoration finishes, so a new start
+        # cannot race with the previous operation's resume_mic().
+        with self._audio_lock:
+            with self.lock:
+                if self._recording_id != rec_id or self._shutting_down:
+                    return
+                self.is_recording = False
+                self.is_processing = True
+            try:
+                try:
+                    # Also discard the completed buffer, preventing a very fast
+                    # next start/stop from transcribing the previous dictation.
+                    self.audio.cancel_recording()
+                except Exception as e:
+                    self._report_error("microphone cleanup", e, rec_id)
+                try:
+                    self.wake_detector.resume_mic()
+                except Exception as e:
+                    self._report_error("wake microphone", e, rec_id)
+            finally:
+                with self.lock:
+                    if self._recording_id == rec_id:
+                        self.is_processing = False
+
+    def process_audio_thread(self, is_wake_word=False, rec_id=None):
+        if rec_id is None:
+            rec_id = self._recording_id
+        try:
+            self._process_audio(is_wake_word, rec_id)
+        except Exception as e:
+            self._report_error("processing", e, rec_id)
+        finally:
+            self._finish_recording(rec_id)
+
+    def _process_audio(self, is_wake_word, rec_id):
         print("Stopping recording.")
         self.q.put({"cmd": "show", "text": "processing"})
         
-        # Trim last ~1.1 seconds only if recording was stopped by saying the wake word
-        trim_duration = 1.1 if is_wake_word else 0.0
-        self.audio.stop_recording(trim_seconds=trim_duration)
+        with self._audio_lock:
+            with self.lock:
+                if self._recording_id != rec_id or self._shutting_down:
+                    return
+            # Keep all audio: a fixed cut may remove the last useful word or number.
+            self.audio.stop_recording(trim_seconds=0.0)
         raw_text = self.audio.transcribe()
+        if raw_text and is_wake_word:
+            keyword = self.wake_detector.keyword.strip()
+            if keyword:
+                # Remove only the recognized command at the end, before glossary/LLM.
+                pattern = r"(?<!\w)" + re.escape(keyword) + r"(?!\w)[\s.!?,;:…]*$"
+                raw_text = re.sub(pattern, "", raw_text, flags=re.IGNORECASE).rstrip()
         
         if raw_text:
+            warnings = []
             # Apply user glossary substitutions
-            processed_text = self.glossary.apply(raw_text)
+            try:
+                processed_text = self.glossary.apply(raw_text)
+            except Exception as e:
+                print(f"[Glossary] Processing error: {e}. Исходный текст сохранён.")
+                processed_text = raw_text
+                warnings.append("glossary")
             if processed_text != raw_text:
                 cyan_glossary = "\033[38;2;100;200;255m\033[1m[Glossary]\033[0m"
                 print(f"{cyan_glossary} {processed_text}")
@@ -191,47 +280,80 @@ class WinVoiceApp:
 
             # Check if LLM processing is requested by any mode toggle
             needs_llm = self.ui.llm_enabled or self.ui.ai_task_enabled or self.ui.translate_en_enabled
-            if needs_llm:
+            # If glossary processing failed, preserve the original instead of
+            # applying further transformations and claiming it was saved unchanged.
+            if needs_llm and not warnings:
                 self.q.put({"cmd": "show", "text": "normalization"})
-                final_text = self.llm.normalize(
-                    raw_text,
-                    translate_en=self.ui.translate_en_enabled,
-                    ai_task=self.ui.ai_task_enabled
-                )
+                try:
+                    result = self.llm.normalize_result(
+                        raw_text,
+                        translate_en=self.ui.translate_en_enabled,
+                        ai_task=self.ui.ai_task_enabled
+                    )
+                    final_text = result.text if result.succeeded else raw_text
+                    if not result.succeeded:
+                        print(f"[Shockwave] {result.warning} Исходный текст сохранён.")
+                        warnings.append("LLM")
+                except Exception as e:
+                    print(f"[Shockwave] LLM processing error: {e}. Исходный текст сохранён.")
+                    final_text = raw_text
+                    warnings.append("LLM")
             else:
                 final_text = raw_text
                 
             yellow_final = "\033[38;2;255;215;0m\033[1mFinal text:\033[0m"
             print(f"{yellow_final} {final_text}")
-            self.typer.type_text(final_text, prepend_clipboard=self.ui.clip_prepend_enabled)
-            self.q.put({"cmd": "show_ready"})
+            with self._audio_lock:
+                with self.lock:
+                    if self._recording_id != rec_id or self._shutting_down:
+                        return
+                self.typer.type_text(final_text, prepend_clipboard=self.ui.clip_prepend_enabled)
+                if warnings:
+                    stage = "/".join(warnings)
+                    text = (f"{stage}: исходный сохранён" if config.APP_LANGUAGE == "ru"
+                            else f"{stage} failed: original saved")
+                    self.q.put({"cmd": "show", "text": text})
+                else:
+                    self.q.put({"cmd": "show_ready"})
         else:
             print("Warning: Transcription was empty or failed. Skipping.")
             self.q.put({"cmd": "show", "text": "what is your command?"})
         
-        with self.lock:
-            self.is_processing = False
-            self.is_recording = False
-            self.wake_detector.resume_mic()
-
     def quit_app(self):
         """Cleanly signals UI to quit."""
+        with self.lock:
+            self._shutting_down = True
+            self.is_recording = False
+            self._recording_id += 1
         self.q.put({"cmd": "quit"})
 
     def cleanup(self):
-        if hasattr(self, 'wake_detector'):
-            self.wake_detector.disable()
-        if hasattr(self, 'tray'):
-            self.tray.stop()
-        if hasattr(self, 'hotkey_mgr'):
-            self.hotkey_mgr.stop()
-        if hasattr(self, 'audio'):
-            self.audio.cleanup()
-        else:
-            self.audio.stop_recording()
-        if os.path.exists(config.AUDIO_TEMP_FILE):
+        with self.lock:
+            self._shutting_down = True
+            self.is_recording = False
+            self._recording_id += 1
+        with self._audio_lock:
+            for name in ("wake_detector", "audio"):
+                component = getattr(self, name, None)
+                if component is not None:
+                    try:
+                        if name == "wake_detector":
+                            component.disable()
+                        else:
+                            component.cleanup()
+                    except Exception as e:
+                        print(f"[Shockwave] {name} shutdown error: {e}")
+        for name in ("tray", "hotkey_mgr"):
+            component = getattr(self, name, None)
+            if component is not None:
+                try:
+                    component.stop()
+                except Exception as e:
+                    print(f"[Shockwave] {name} shutdown error: {e}")
+        temp_file = getattr(config, "AUDIO_TEMP_FILE", "")
+        if temp_file and os.path.exists(temp_file):
             try:
-                os.remove(config.AUDIO_TEMP_FILE)
+                os.remove(temp_file)
             except:
                 pass
         release_single_instance()

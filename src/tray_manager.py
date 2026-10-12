@@ -57,6 +57,8 @@ LRESULT = ctypes.c_ssize_t
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+shell32 = ctypes.windll.shell32
 user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 user32.DefWindowProcW.restype = LRESULT
 user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
@@ -122,6 +124,74 @@ class ITaskbarListVtbl(ctypes.Structure):
 class ITaskbarList(ctypes.Structure):
     _fields_ = [('lpVtbl', ctypes.POINTER(ITaskbarListVtbl))]
 
+
+# ctypes otherwise assumes a 32-bit int result and untyped integer arguments.
+# Declare every API used by this module before passing window/icon/menu handles.
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+kernel32.GetConsoleWindow.argtypes = []
+kernel32.GetConsoleWindow.restype = wintypes.HWND
+
+if ctypes.sizeof(ctypes.c_void_p) == 4:
+    # Get/SetWindowLongPtr are macros for Get/SetWindowLong on 32-bit Windows.
+    user32.GetWindowLongPtrW = user32.GetWindowLongW
+    user32.SetWindowLongPtrW = user32.SetWindowLongW
+
+user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.ShowWindow.restype = wintypes.BOOL
+user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+user32.SetForegroundWindow.restype = wintypes.BOOL
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.IsWindowVisible.restype = wintypes.BOOL
+user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                            ctypes.c_int, ctypes.c_int, wintypes.UINT]
+user32.LoadImageW.restype = wintypes.HANDLE
+user32.LoadIconW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR]
+user32.LoadIconW.restype = wintypes.HICON
+user32.CreatePopupMenu.argtypes = []
+user32.CreatePopupMenu.restype = wintypes.HMENU
+user32.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
+user32.AppendMenuW.restype = wintypes.BOOL
+user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+user32.GetCursorPos.restype = wintypes.BOOL
+user32.TrackPopupMenu.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_int,
+                                ctypes.c_int, ctypes.c_int, wintypes.HWND,
+                                ctypes.POINTER(wintypes.RECT)]
+user32.TrackPopupMenu.restype = wintypes.BOOL
+user32.DestroyMenu.argtypes = [wintypes.HMENU]
+user32.DestroyMenu.restype = wintypes.BOOL
+user32.PostQuitMessage.argtypes = [ctypes.c_int]
+user32.PostQuitMessage.restype = None
+user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+user32.RegisterClassW.restype = wintypes.ATOM
+user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                                 wintypes.DWORD, ctypes.c_int, ctypes.c_int,
+                                 ctypes.c_int, ctypes.c_int, wintypes.HWND,
+                                 wintypes.HMENU, wintypes.HINSTANCE, ctypes.c_void_p]
+user32.CreateWindowExW.restype = wintypes.HWND
+user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
+                             wintypes.UINT, wintypes.UINT]
+user32.GetMessageW.restype = wintypes.BOOL
+user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+user32.TranslateMessage.restype = wintypes.BOOL
+user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+user32.DispatchMessageW.restype = LRESULT
+user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+user32.PostMessageW.restype = wintypes.BOOL
+shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
+shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+
+ole32 = ctypes.oledll.ole32
+ole32.CoInitialize.argtypes = [ctypes.c_void_p]
+ole32.CoInitialize.restype = ctypes.c_long
+ole32.CoCreateInstance.argtypes = [ctypes.POINTER(GUID), ctypes.c_void_p, wintypes.DWORD,
+                                 ctypes.POINTER(GUID), ctypes.POINTER(ctypes.POINTER(ITaskbarList))]
+ole32.CoCreateInstance.restype = ctypes.c_long
+
 def delete_taskbar_tab(hwnd):
     """Removes the window's button/tab from the Windows taskbar."""
     if not hwnd:
@@ -155,7 +225,7 @@ def add_taskbar_tab(hwnd):
 def get_root_console_hwnd():
     """Returns the top-level root window for the console (Windows Terminal or ConHost)."""
     try:
-        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        hwnd = kernel32.GetConsoleWindow()
         if not hwnd:
             return 0
         root = user32.GetAncestor(hwnd, GA_ROOT)
@@ -246,7 +316,8 @@ class SystemTrayManager:
                 
         if not self.hicon:
             # Fallback to system default application icon
-            self.hicon = user32.LoadIconW(0, 32512)
+            resource = ctypes.cast(ctypes.c_void_p(32512), wintypes.LPCWSTR)
+            self.hicon = user32.LoadIconW(None, resource)
 
     def _show_context_menu(self):
         hmenu = user32.CreatePopupMenu()
@@ -304,8 +375,6 @@ class SystemTrayManager:
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def _run_message_loop(self):
-        kernel32 = ctypes.windll.kernel32
-        
         class_name = f"ShockwaveTrayClass_{os.getpid()}"
         hinstance = kernel32.GetModuleHandleW(None)
         
@@ -333,7 +402,7 @@ class SystemTrayManager:
         self.nid.hIcon = self.hicon
         self.nid.szTip = self.tooltip[:127]
         
-        ctypes.windll.shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self.nid))
+        shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self.nid))
         self.is_running = True
         
         msg = wintypes.MSG()
@@ -353,7 +422,7 @@ class SystemTrayManager:
         self.is_running = False
         if self.nid and self.hwnd:
             try:
-                ctypes.windll.shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(self.nid))
+                shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(self.nid))
             except Exception:
                 pass
         if self.hwnd:

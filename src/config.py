@@ -1,6 +1,8 @@
 import os
 import sys
 import configparser
+import re
+import tempfile
 from dotenv import load_dotenv
 
 def _find_file(filename: str) -> str:
@@ -72,22 +74,91 @@ if os.path.exists(CONFIG_INI_PATH):
     except Exception as e:
         print(f"[Config] Warning reading config.ini: {e}")
 
-def get_setting(section: str, option: str, env_var: str = None, default: str = "") -> str:
+def get_setting(section: str, option: str, env_var: str = None, default: str = "", allow_empty=False) -> str:
     """Reads setting with priority: config.ini [section] -> config.ini [DEFAULT] -> environment / .env -> default."""
     if section and option and ini_parser.has_section(section) and ini_parser.has_option(section, option):
         val = ini_parser.get(section, option).strip()
-        if val != "":
+        if val != "" or allow_empty:
             return val
     # Fallback to DEFAULT section if user wrote a flat config file
     if option and ini_parser.has_option("DEFAULT", option):
         val = ini_parser.get("DEFAULT", option).strip()
-        if val != "":
+        if val != "" or allow_empty:
             return val
     if env_var:
         env_val = os.getenv(env_var)
-        if env_val is not None and env_val.strip() != "":
+        if env_val is not None and (env_val.strip() != "" or allow_empty):
             return env_val.strip()
     return default
+
+def save_setting(name: str, value: str):
+    """Atomically save a menu preference, preserving unrelated text and comments."""
+    locations = {
+        "STT_ENGINE": ("Recognition", "engine"),
+        "WAKE_WORD": ("Recognition", "wake_word"),
+        "GIGAAM_QUANTIZATION": ("Recognition", "gigaam_quantization"),
+        "APP_LANGUAGE": ("Interface", "language"),
+    }
+    section, option = locations[name]
+    value = str(value)
+    if any(c in value for c in "\r\n\x00"):
+        raise ValueError("Setting must be a single line")
+    content = ""
+    if os.path.exists(CONFIG_INI_PATH):
+        with open(CONFIG_INI_PATH, encoding="utf-8", newline="") as source:
+            content = source.read()
+    parsed = configparser.ConfigParser()
+    try:
+        parsed.read_string(content)
+    except configparser.MissingSectionHeaderError:
+        content = "[DEFAULT]\n" + content
+        parsed.read_string(content)
+    newline = "\r\n" if "\r\n" in content else "\n"
+    lines = content.splitlines(keepends=True)
+    start = end = None
+    for i, line in enumerate(lines):
+        header = re.match(r"\s*\[([^\]]+)\]", line)
+        if header:
+            if start is not None:
+                end = i
+                break
+            if header.group(1) == section:
+                start = i + 1
+    if start is None:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] += newline
+        lines.extend([f"[{section}]{newline}", f"{option} = {value.replace('%', '%%')}{newline}"])
+    else:
+        end = len(lines) if end is None else end
+        for i in range(start, end):
+            match = re.match(r"(\s*)([^\s:=]+)\s*[:=]", lines[i])
+            if match and match.group(2).lower() == option:
+                # Remove old continuation lines belonging to this option only.
+                stop = i + 1
+                while stop < end and lines[stop].strip() and not lines[stop].lstrip().startswith(("#", ";")) and len(lines[stop]) - len(lines[stop].lstrip()) > len(match.group(1)):
+                    stop += 1
+                lines[i:stop] = [f"{match.group(1)}{option} = {value.replace('%', '%%')}{newline}"]
+                break
+        else:
+            if end and not lines[end - 1].endswith(("\n", "\r")):
+                lines[end - 1] += newline
+            lines.insert(end, f"{option} = {value.replace('%', '%%')}{newline}")
+    updated = "".join(lines)
+    parsed = configparser.ConfigParser()
+    parsed.read_string(updated)
+    parsed.get(section, option)  # Validate interpolation before replacing the file.
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", dir=os.path.dirname(CONFIG_INI_PATH), delete=False) as target:
+            temp_path = target.name
+            target.write(updated)
+        os.replace(temp_path, CONFIG_INI_PATH)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+    global ini_parser
+    ini_parser = parsed
+    globals()[name] = value
 
 def get_bool(section: str, option: str, env_var: str = None, default: bool = False) -> bool:
     val = get_setting(section, option, env_var, str(default)).strip().lower()
@@ -117,7 +188,9 @@ WHISPER_LANGUAGE = get_setting("Recognition", "whisper_language", "WHISPER_LANGU
 
 GIGAAM_MODEL = get_setting("Recognition", "gigaam_model", "GIGAAM_MODEL", default="gigaam-v3-e2e-rnnt")
 GIGAAM_MODEL_PATH = os.getenv("GIGAAM_MODEL_PATH", "")
-GIGAAM_QUANTIZATION = get_setting("Recognition", "gigaam_quantization", "GIGAAM_QUANTIZATION", default="int8")
+GIGAAM_QUANTIZATION = get_setting("Recognition", "gigaam_quantization", "GIGAAM_QUANTIZATION", default="int8", allow_empty=True).lower()
+if GIGAAM_QUANTIZATION in ("", "none", "fp32"):
+    GIGAAM_QUANTIZATION = "float32"
 
 WAKE_WORD_ENABLED = get_bool("Toggles", "wake", "WAKE_WORD_ENABLED", default=get_bool("Recognition", "wake_word_enabled", "WAKE_WORD_ENABLED", default=True))
 WAKE_WORD = get_setting("Recognition", "wake_word", "WAKE_WORD", default="мега")

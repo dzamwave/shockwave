@@ -167,6 +167,7 @@ class GlossaryManager:
 
         result = text
         for regex, replacement in self._rules:
-            result = regex.sub(replacement, result)
+            # Callable replacements are literal: backslashes are not regex commands.
+            result = regex.sub(lambda match: replacement, result)
 
         return result

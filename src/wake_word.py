@@ -30,60 +30,97 @@ def get_resource_path(relative_path):
         return candidate
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
-def ensure_vosk_model(model_dir=None):
-    """Ensures Vosk model files exist locally. If missing, downloads from mirror list."""
-    target_dir = model_dir or getattr(config, "VOSK_MODEL_PATH", None) or os.path.join(config.MODELS_DIR, "vosk-model-small-ru")
-    if os.path.exists(target_dir):
-        files = [f for f in os.listdir(target_dir) if f != ".gitkeep"]
-        if files:
-            return target_dir
+def _valid_vosk_model(folder):
+    required = ("am/final.mdl", "conf/mfcc.conf")
+    graphs = (("graph/HCLr.fst", "graph/Gr.fst"), ("graph/HCLG.fst",))
+    def present(name):
+        path = os.path.join(folder, name)
+        return os.path.isfile(path) and os.path.getsize(path) > 0
+    return all(present(name) for name in required) and any(
+        all(present(name) for name in group) for group in graphs
+    )
 
+
+def ensure_vosk_model(model_dir=None):
+    """Validate locally, then stage downloads before publishing into an empty folder."""
+    import shutil
+    import tempfile
     import urllib.request
     import zipfile
 
-    mirrors = []
-    custom_url = getattr(config, "VOSK_MODEL_URL", None)
-    if custom_url:
-        mirrors.append(custom_url)
-    default_mirrors = [
-        "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip",
-        "https://huggingface.co/alphacep/vosk-model-small-ru/resolve/main/vosk-model-small-ru-0.22.zip"
-    ]
-    for m in default_mirrors:
-        if m not in mirrors:
-            mirrors.append(m)
-
-    os.makedirs(config.MODELS_DIR, exist_ok=True)
-    temp_zip = os.path.join(config.MODELS_DIR, "vosk_temp.zip")
-
-    downloaded = False
-    for url in mirrors:
-        try:
-            print(f"[WakeWord] Downloading Vosk model from: {url} ...")
-            urllib.request.urlretrieve(url, temp_zip)
-            downloaded = True
-            print("[WakeWord] Download complete. Extracting...")
-            break
-        except Exception as err:
-            print(f"[WakeWord] Mirror failed ({url}): {err}. Trying next mirror...")
-
-    if not downloaded:
-        print("[WakeWord] Error: Could not download Vosk model from any mirror.")
-        return None
-
-    try:
-        with zipfile.ZipFile(temp_zip, 'r') as z:
-            z.extractall(config.MODELS_DIR)
-        if os.path.exists(temp_zip):
-            os.remove(temp_zip)
-
-        extracted = os.path.join(config.MODELS_DIR, "vosk-model-small-ru-0.22")
-        if os.path.exists(extracted) and not os.path.exists(target_dir):
-            os.rename(extracted, target_dir)
+    target_dir = model_dir or getattr(config, "VOSK_MODEL_PATH", None) or config.VOSK_DIR
+    if _valid_vosk_model(target_dir):
         return target_dir
-    except Exception as e:
-        print(f"[WakeWord] Extraction error: {e}")
+
+    def placeholder_only():
+        return os.path.isdir(target_dir) and all(
+            name == ".gitkeep" and os.path.isfile(os.path.join(target_dir, name))
+            for name in os.listdir(target_dir)
+        )
+
+    if os.path.lexists(target_dir) and not placeholder_only():
+        print(f"[WakeWord] Incomplete Vosk model at {target_dir}; existing files preserved.")
         return None
+    mirrors = []
+    for url in (getattr(config, "VOSK_MODEL_URL", None),
+                "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip",
+                "https://huggingface.co/alphacep/vosk-model-small-ru/resolve/main/vosk-model-small-ru-0.22.zip"):
+        if url and url not in mirrors:
+            mirrors.append(url)
+    staging = backup = None
+    try:
+        parent = os.path.dirname(os.path.abspath(target_dir))
+        os.makedirs(parent, exist_ok=True)
+        staging = tempfile.mkdtemp(prefix=".vosk-download-", dir=parent)
+        archive_path = os.path.join(staging, "model.zip")
+        extracted = os.path.join(staging, "unpacked")
+        for url in mirrors:
+            try:
+                print(f"[WakeWord] Downloading Vosk model from: {url} ...")
+                urllib.request.urlretrieve(url, archive_path)
+                with zipfile.ZipFile(archive_path) as archive:
+                    for member in archive.infolist():
+                        destination = os.path.abspath(os.path.join(extracted, member.filename))
+                        if os.path.commonpath((os.path.abspath(extracted), destination)) != os.path.abspath(extracted):
+                            raise ValueError("Archive path outside staging directory")
+                    archive.extractall(extracted)
+                model = os.path.join(extracted, "vosk-model-small-ru-0.22")
+                if not _valid_vosk_model(model):
+                    raise ValueError("Archive does not contain a complete Vosk model")
+                break
+            except Exception as err:
+                print(f"[WakeWord] Mirror failed: {err}. Trying next mirror...")
+                if os.path.isdir(extracted):
+                    shutil.rmtree(extracted)
+        else:
+            print("[WakeWord] Error: Could not download a complete Vosk model.")
+            return None
+        # Recheck after download: never overwrite files added in the meantime.
+        if os.path.lexists(target_dir):
+            if not placeholder_only():
+                raise ValueError("Destination changed during download; files preserved")
+            backup = os.path.join(staging, "original")
+            os.rename(target_dir, backup)
+            placeholder = os.path.join(backup, ".gitkeep")
+            if os.path.isfile(placeholder):
+                shutil.copy2(placeholder, os.path.join(model, ".gitkeep"))
+        os.rename(model, target_dir)
+        if backup:
+            shutil.rmtree(backup)
+            backup = None
+        return target_dir
+    except Exception as err:
+        print(f"[WakeWord] Model preparation failed: {err}")
+        if backup and os.path.exists(backup):
+            try:
+                os.rename(backup, target_dir)
+                backup = None
+            except OSError as restore_error:
+                print(f"[WakeWord] Original folder retained at {backup}: {restore_error}")
+        return None
+    finally:
+        if staging and not backup:
+            shutil.rmtree(staging, ignore_errors=True)
 
 class WakeWordDetector:
     def __init__(self, on_wake_callback=None, model_path=None, keyword=None):
@@ -101,6 +138,8 @@ class WakeWordDetector:
         self._is_listening_mic = False
         self._last_trigger_time = 0.0
         self._lock = threading.Lock()
+        self._stream_lock = threading.RLock()
+        self._mic_paused = False
         self._audio_q = queue.Queue()
         
         # Deferred loading: Vosk model is loaded only when enable() / start_mic() is invoked.
@@ -112,7 +151,9 @@ class WakeWordDetector:
             print("[WakeWord] Error: Vosk library is not installed.")
             return
 
-        candidate_path = ensure_vosk_model(self.model_path) or self.model_path
+        candidate_path = ensure_vosk_model(self.model_path)
+        if not candidate_path:
+            return
         if not os.path.exists(candidate_path):
             candidate_path = get_resource_path(candidate_path)
             
@@ -200,51 +241,90 @@ class WakeWordDetector:
 
     def start_mic(self):
         """Starts background microphone stream for wake word detection."""
-        with self._lock:
-            if not self.model or not self.recognizer:
-                self._init_model()
-                if not self.model:
+        with self._stream_lock:
+            with self._lock:
+                if not self._is_enabled or self._mic_paused:
+                    return
+                if not self.model or not self.recognizer:
+                    self._init_model()
+                    if not self.model or not self.recognizer:
+                        return
+                if self.stream is not None and self._is_listening_mic:
                     return
 
-            if self.stream is not None:
-                return
-
             try:
-                self._is_listening_mic = True
-                self.stream = sd.RawInputStream(
+                # A failed close keeps its handle for retry. It is not an
+                # active listener and must not prevent subsequent recovery.
+                self._close_mic_stream()
+                stream = sd.RawInputStream(
                     samplerate=16000,
                     blocksize=4000,
                     dtype='int16',
                     channels=1,
                     callback=self._audio_callback
                 )
-                self.stream.start()
+                with self._lock:
+                    self.stream = stream
+                    self._is_listening_mic = True
+                stream.start()
+                with self._lock:
+                    cancelled = not self._is_enabled or self._mic_paused
+                if cancelled:
+                    self._close_mic_stream()
             except Exception as e:
                 print(f"[WakeWord] Failed to open microphone stream: {e}")
+                try:
+                    self._close_mic_stream()
+                except Exception as cleanup_error:
+                    print(f"[WakeWord] Microphone cleanup error: {cleanup_error}")
+
+    def _close_mic_stream(self):
+        # Caller holds _stream_lock. The callback only needs _lock, which
+        # must remain free while PortAudio waits for that callback to finish.
+        with self._lock:
+            self._is_listening_mic = False
+            stream = self.stream
+        if stream is None:
+            return
+        error = None
+        try:
+            stream.stop()
+        except Exception as e:
+            error = e
+        try:
+            stream.close()
+        except Exception as e:
+            if error is None:
+                error = e
+        else:
+            with self._lock:
                 self.stream = None
-                self._is_listening_mic = False
+        if error is not None:
+            raise error
 
     def pause_mic(self):
         """Temporarily halts internal mic capture (e.g. when main recording stream is active)."""
         with self._lock:
+            self._mic_paused = True
             self._is_listening_mic = False
-            if self.stream:
-                try:
-                    self.stream.stop()
-                    self.stream.close()
-                except Exception:
-                    pass
-                self.stream = None
+        with self._stream_lock:
+            self._close_mic_stream()
 
     def resume_mic(self):
         """Resumes internal mic capture if wake word is enabled."""
-        if self._is_enabled:
+        with self._lock:
+            self._mic_paused = False
+            enabled = self._is_enabled
+        if enabled:
             self.start_mic()
 
-    def enable(self):
+    def enable(self, start_mic=True):
         """Enables wake word detection and starts listening."""
-        self._is_enabled = True
-        threading.Thread(target=self.start_mic, daemon=True).start()
+        with self._lock:
+            self._is_enabled = True
+            self._mic_paused = not start_mic
+        if start_mic:
+            threading.Thread(target=self.start_mic, daemon=True).start()
 
     def unload_model(self):
         """Unloads Vosk model and recognizer from memory and releases OS pages."""
@@ -266,9 +346,13 @@ class WakeWordDetector:
 
     def disable(self):
         """Disables wake word detection, closes microphone stream, and unloads model."""
-        self._is_enabled = False
-        self.pause_mic()
-        self.unload_model()
+        with self._lock:
+            self._is_enabled = False
+        try:
+            self.pause_mic()
+        finally:
+            with self._stream_lock:
+                self.unload_model()
 
     def is_enabled(self):
         return self._is_enabled

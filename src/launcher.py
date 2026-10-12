@@ -1,7 +1,7 @@
 import os
 import sys
 import subprocess
-from dotenv import load_dotenv, set_key
+from dotenv import set_key
 
 # Enable UTF-8 encoding for console output
 try:
@@ -26,54 +26,22 @@ def get_resource_path(relative_path):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 def get_env_path():
-    cwd_env = os.path.abspath(".env")
-    if os.path.exists(cwd_env):
-        return cwd_env
-        
-    if getattr(sys, 'frozen', False):
-        exe_dir = os.path.dirname(sys.executable)
-        exe_env = os.path.join(exe_dir, ".env")
-        if os.path.exists(exe_env):
-            return exe_env
-        parent_env = os.path.abspath(os.path.join(exe_dir, "..", ".env"))
-        if os.path.exists(parent_env):
-            return parent_env
-        root_env = os.path.abspath(os.path.join(exe_dir, "..", "..", ".env"))
-        if os.path.exists(root_env):
-            return root_env
-        return cwd_env
-        
-    root_dir = os.path.abspath(os.path.join(current_dir, ".."))
-    candidate = os.path.join(root_dir, ".env")
-    if os.path.exists(candidate):
-        return candidate
-    return ".env"
+    return config.env_path
 
 def ensure_env_exists():
     env_path = get_env_path()
     if not os.path.exists(env_path):
         with open(env_path, "w", encoding="utf-8") as f:
-            f.write("STT_ENGINE=gigaam\n")
-            f.write("WHISPER_MODEL=large-v3-turbo\n")
-            f.write("WHISPER_LANGUAGE=ru\n")
-            f.write("GIGAAM_MODEL=gigaam-v3-e2e-rnnt\n")
-            f.write("GIGAAM_QUANTIZATION=int8\n")
-            f.write("APP_LANGUAGE=en\n")
             f.write("LLM_ENDPOINT=\n")
             f.write("LLM_API_KEY=\n")
-            f.write("LLM_MODEL=gemini-2.5-flash-lite\n")
-            f.write("HOTKEY=ctrl+space\n")
-            f.write("UI_POSITION=bottom-left\n")
+            f.write(f"LLM_MODEL={config.LLM_MODEL}\n")
 
 def read_env(key, default=""):
-    env_path = get_env_path()
-    load_dotenv(env_path, override=True)
-    return os.getenv(key, default)
+    return getattr(config, key, default)
 
 def update_env(key, value):
     env_path = get_env_path()
     set_key(env_path, key, value)
-    load_dotenv(env_path, override=True)
     os.environ[key] = str(value)
     try:
         setattr(config, key, value)
@@ -99,7 +67,7 @@ def print_banner():
             with open(ansi_path, "r", encoding="utf-8") as f:
                 lines = f.read().split("\n")
                 try:
-                    banner_pad_n = int(getattr(config, "CLI_BANNER_PAD", read_env("CLI_BANNER_PAD", "3")))
+                    banner_pad_n = int(getattr(config, "CLI_BANNER_PAD", "3"))
                 except Exception:
                     banner_pad_n = 3
                 pad = " " * max(0, banner_pad_n)
@@ -111,12 +79,12 @@ def print_banner():
             
     # Iconic tagline with configurable color and padding from config / .env
     try:
-        quote_pad_n = int(getattr(config, "CLI_QUOTE_PAD", read_env("CLI_QUOTE_PAD", "6")))
+        quote_pad_n = int(getattr(config, "CLI_QUOTE_PAD", "6"))
     except Exception:
         quote_pad_n = 6
     q_pad = " " * max(0, quote_pad_n)
     
-    quote_hex = getattr(config, "CLI_QUOTE_COLOR", read_env("CLI_QUOTE_COLOR", "#807785"))
+    quote_hex = getattr(config, "CLI_QUOTE_COLOR", "#807785")
     qr, qg, qb = hex_to_rgb(quote_hex, (128, 119, 133))
     tagline = "WHAT IS YOUR COMMAND, MEGATRON?"
     custom_quote = f"\033[1;3;38;2;{qr};{qg};{qb}m{tagline}\033[0m"
@@ -126,7 +94,7 @@ def menu():
     ensure_env_exists()
     
     # Dynamic title color from config / .env (default: #B45FEB)
-    title_hex = getattr(config, "CLI_TITLE_COLOR", read_env("CLI_TITLE_COLOR", "#B45FEB"))
+    title_hex = getattr(config, "CLI_TITLE_COLOR", "#B45FEB")
     tr, tg, tb = hex_to_rgb(title_hex, (180, 95, 235))
     PURPLE = f"\033[38;2;{tr};{tg};{tb}m"
     RESET = "\033[0m"
@@ -136,28 +104,28 @@ def menu():
         clear_screen()
         print_banner()
         
-        lang = getattr(config, "APP_LANGUAGE", read_env("APP_LANGUAGE", "ru")).lower()
-        engine = getattr(config, "STT_ENGINE", read_env("STT_ENGINE", "gigaam")).lower()
+        lang = getattr(config, "APP_LANGUAGE", "ru").lower()
+        engine = getattr(config, "STT_ENGINE", "gigaam").lower()
         
         if engine == "whisper":
-            whisper_m = getattr(config, "WHISPER_MODEL", read_env("WHISPER_MODEL", "large-v3-turbo"))
+            whisper_m = getattr(config, "WHISPER_MODEL", "large-v3-turbo")
             stt_display = f"Whisper ({whisper_m})"
         else:
-            gigaam_m = getattr(config, "GIGAAM_MODEL", read_env("GIGAAM_MODEL", "gigaam-v3-e2e-rnnt"))
-            quant = getattr(config, "GIGAAM_QUANTIZATION", read_env("GIGAAM_QUANTIZATION", "int8"))
+            gigaam_m = getattr(config, "GIGAAM_MODEL", "gigaam-v3-e2e-rnnt")
+            quant = getattr(config, "GIGAAM_QUANTIZATION", "int8")
             q_suffix = f", {quant}" if quant else ""
             stt_display = f"GigaAM ({gigaam_m}{q_suffix})"
 
-        wake_word = getattr(config, "WAKE_WORD", read_env("WAKE_WORD", "мегатрон"))
+        wake_word = getattr(config, "WAKE_WORD", "мегатрон")
         wake_display = f"Vosk (\"{wake_word}\")"
 
-        llm_endpoint = getattr(config, "LLM_ENDPOINT", read_env("LLM_ENDPOINT", ""))
-        llm_model = getattr(config, "LLM_MODEL", read_env("LLM_MODEL", "gemini-2.5-flash"))
-        llm_key = getattr(config, "LLM_API_KEY", read_env("LLM_API_KEY", ""))
+        llm_endpoint = getattr(config, "LLM_ENDPOINT", "")
+        llm_model = getattr(config, "LLM_MODEL", "gemini-2.5-flash")
+        llm_key = getattr(config, "LLM_API_KEY", "")
         version = getattr(config, "APP_VERSION", "1.0.0")
         
         try:
-            title_pad_n = int(getattr(config, "CLI_TITLE_PAD", read_env("CLI_TITLE_PAD", "0")))
+            title_pad_n = int(getattr(config, "CLI_TITLE_PAD", "0"))
         except Exception:
             title_pad_n = 0
         t_pad = " " * max(0, title_pad_n)
@@ -213,8 +181,11 @@ def menu():
             import model_manager
             model_manager.check_and_prompt(auto_start=True)
             
-            # Synchronize active engine in config
-            config.STT_ENGINE = read_env("STT_ENGINE", "gigaam")
+            # The model check may have changed the selected engine.
+            if config.STT_ENGINE.lower() == "whisper":
+                stt_display = f"Whisper ({config.WHISPER_MODEL})"
+            else:
+                stt_display = f"GigaAM ({config.GIGAAM_MODEL}, {config.GIGAAM_QUANTIZATION})"
             
             if lang == "ru":
                 print(f"\nЗапуск Shockwave ({stt_display})...")
@@ -243,7 +214,7 @@ def menu():
                 input("\nPress Enter to return to menu...")
         elif choice == "6":
             new_lang = "ru" if lang == "en" else "en"
-            update_env("APP_LANGUAGE", new_lang)
+            config.save_setting("APP_LANGUAGE", new_lang)
         elif choice == "7":
             sys.exit(0)
 
@@ -305,10 +276,10 @@ def setup_stt(lang="en"):
         print(f"2. GigaAM ({gigaam_m}) — очень быстро для русской речи")
         choice = input("\nВыберите движок (1-2): ").strip()
         if choice == "1":
-            update_env("STT_ENGINE", "whisper")
+            config.save_setting("STT_ENGINE", "whisper")
             print(f"Установлен движок: Whisper ({whisper_m})")
         elif choice == "2":
-            update_env("STT_ENGINE", "gigaam")
+            config.save_setting("STT_ENGINE", "gigaam")
             print(f"Установлен движок: GigaAM ({gigaam_m})")
         input("\nНажмите Enter для возврата...")
     else:
@@ -317,10 +288,10 @@ def setup_stt(lang="en"):
         print(f"2. GigaAM ({gigaam_m}) — ultra-fast for Russian speech")
         choice = input("\nSelect engine (1-2): ").strip()
         if choice == "1":
-            update_env("STT_ENGINE", "whisper")
+            config.save_setting("STT_ENGINE", "whisper")
             print(f"Selected engine: Whisper ({whisper_m})")
         elif choice == "2":
-            update_env("STT_ENGINE", "gigaam")
+            config.save_setting("STT_ENGINE", "gigaam")
             print(f"Selected engine: GigaAM ({gigaam_m})")
         input("\nPress Enter to return...")
 
@@ -333,7 +304,7 @@ def setup_wake_word(lang="en"):
         print(f"Текущее кодовое слово: \"{current_kw}\"")
         new_kw = input("\nВведите новое кодовое слово (или Enter, чтобы оставить): ").strip()
         if new_kw:
-            update_env("WAKE_WORD", new_kw.lower())
+            config.save_setting("WAKE_WORD", new_kw.lower())
             print(f"Кодовое слово успешно изменено на: \"{new_kw.lower()}\"!")
         input("\nНажмите Enter для возврата...")
     else:
@@ -342,7 +313,7 @@ def setup_wake_word(lang="en"):
         print(f"Current Wake Word: \"{current_kw}\"")
         new_kw = input("\nEnter new wake word (or press Enter to keep): ").strip()
         if new_kw:
-            update_env("WAKE_WORD", new_kw.lower())
+            config.save_setting("WAKE_WORD", new_kw.lower())
             print(f"Wake word successfully changed to: \"{new_kw.lower()}\"!")
         input("\nPress Enter to return...")
 

@@ -1,5 +1,7 @@
 import os
 import sys
+import re
+from pathlib import Path
 
 # Suppress Hugging Face warnings
 os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
@@ -8,7 +10,6 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 import config
 
 from huggingface_hub import snapshot_download
-from dotenv import set_key, load_dotenv
 
 WHISPER_REPOS = {
     "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
@@ -19,40 +20,6 @@ WHISPER_REPOS = {
     "tiny": "Systran/faster-whisper-tiny"
 }
 
-def get_env_path():
-    cwd_env = os.path.abspath(".env")
-    if os.path.exists(cwd_env):
-        return cwd_env
-    if getattr(sys, 'frozen', False):
-        exe_dir = os.path.dirname(sys.executable)
-        exe_env = os.path.join(exe_dir, ".env")
-        if os.path.exists(exe_env):
-            return exe_env
-        parent_env = os.path.abspath(os.path.join(exe_dir, "..", ".env"))
-        if os.path.exists(parent_env):
-            return parent_env
-        root_env = os.path.abspath(os.path.join(exe_dir, "..", "..", ".env"))
-        if os.path.exists(root_env):
-            return root_env
-    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    candidate = os.path.join(root_dir, ".env")
-    if os.path.exists(candidate):
-        return candidate
-    return ".env"
-
-def update_env(key, value):
-    env_path = get_env_path()
-    if not os.path.exists(env_path):
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.write("\n")
-    set_key(env_path, key, value)
-    load_dotenv(env_path, override=True)
-    os.environ[key] = str(value)
-    try:
-        setattr(config, key, value)
-    except Exception:
-        pass
-
 def is_whisper_downloaded():
     target_dir = config.WHISPER_MODEL_PATH if config.WHISPER_MODEL_PATH else config.WHISPER_DIR
     if os.path.exists(target_dir) and (os.path.exists(os.path.join(target_dir, "model.bin")) or os.path.exists(os.path.join(target_dir, "model.safetensors"))):
@@ -61,11 +28,31 @@ def is_whisper_downloaded():
 
 def is_gigaam_downloaded():
     target_dir = config.GIGAAM_MODEL_PATH if config.GIGAAM_MODEL_PATH else config.GIGAAM_DIR
-    if os.path.exists(target_dir):
-        files = os.listdir(target_dir)
-        if any(f.endswith(".onnx") for f in files):
-            return True
-    return False
+    folder = Path(target_dir)
+    if not folder.is_dir():
+        return False
+    quant = config.GIGAAM_QUANTIZATION
+    suffix = "" if quant in ("", "float32") else "?" + quant
+    # Match the file patterns used by onnx-asr for the supported GigaAM versions.
+    model = re.fullmatch(r"gigaam-v[23](-e2e)?-(ctc|rnnt)", config.GIGAAM_MODEL.lower())
+    if model:
+        e2e, architecture = model.groups()
+        prefix = "v3_e2e" if e2e else "v?"
+        stem = f"{prefix}_{architecture}"
+        patterns = ([f"{stem}{suffix}.onnx"] if architecture == "ctc" else
+                    [f"{stem}_{part}{suffix}.onnx" for part in ("encoder", "decoder", "joint")])
+        patterns.append(f"{stem}_vocab.txt" if e2e else "v?_vocab.txt")
+        for pattern in patterns:
+            matches = list(folder.glob(pattern))
+            if not matches and pattern.endswith(".onnx"):
+                matches = list(folder.glob(pattern[:-5] + ".ort"))
+            if len(matches) != 1 or not matches[0].is_file() or not matches[0].stat().st_size:
+                return False
+        return True
+    # Preserve custom-model support while distinguishing full and compressed files.
+    return any(path.is_file() and path.stat().st_size and
+               (("int8" in path.name) == (quant == "int8"))
+               for path in folder.glob("*.onnx"))
 
 def download_whisper_direct(whisper_model, lang="en"):
     repo_id = WHISPER_REPOS.get(whisper_model.lower(), whisper_model)
@@ -104,10 +91,10 @@ def download_gigaam_direct(gigaam_model, quant="int8", lang="en"):
     )
 
 def check_and_prompt(auto_start=True):
-    whisper_model = os.getenv("WHISPER_MODEL", config.WHISPER_MODEL)
-    gigaam_model = os.getenv("GIGAAM_MODEL", config.GIGAAM_MODEL)
-    engine = (os.getenv("STT_ENGINE") or config.STT_ENGINE).lower()
-    lang = os.getenv("APP_LANGUAGE", config.APP_LANGUAGE).lower()
+    whisper_model = config.WHISPER_MODEL
+    gigaam_model = config.GIGAAM_MODEL
+    engine = config.STT_ENGINE.lower()
+    lang = config.APP_LANGUAGE.lower()
     
     needs_download = False
     
@@ -185,20 +172,20 @@ def check_and_prompt(auto_start=True):
                 break
             print("Enter 1 or 2." if lang != "ru" else "Введите 1 или 2.")
         if q_ans == "2":
-            quant_choice = ""
+            quant_choice = "float32"
             
     if choice in ["1", "3"]:
         download_whisper_direct(whisper_model, lang=lang)
         if choice == "1" and engine != "whisper":
-            update_env("STT_ENGINE", "whisper")
+            config.save_setting("STT_ENGINE", "whisper")
             print("Config updated to STT_ENGINE=whisper" if lang != "ru" else "Настройка обновлена: STT_ENGINE=whisper")
             
     if choice in ["2", "3"]:
         download_gigaam_direct(gigaam_model, quant=quant_choice, lang=lang)
         if choice == "2" and engine != "gigaam":
-            update_env("STT_ENGINE", "gigaam")
+            config.save_setting("STT_ENGINE", "gigaam")
             print("Config updated to STT_ENGINE=gigaam" if lang != "ru" else "Настройка обновлена: STT_ENGINE=gigaam")
             
-        update_env("GIGAAM_QUANTIZATION", quant_choice)
+        config.save_setting("GIGAAM_QUANTIZATION", quant_choice)
 
     print("\n[OK] All requested models downloaded directly into models/!\n" if lang != "ru" else "\n[OK] Все запрошенные модели успешно скачаны в папку models/!\n")

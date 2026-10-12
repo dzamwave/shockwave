@@ -9,6 +9,29 @@ import ctypes
 import ctypes.wintypes as wintypes
 import config
 
+# Widget HWNDs must remain pointer-sized even when the tray module is not loaded.
+_user32 = ctypes.windll.user32
+_user32.GetParent.argtypes = [wintypes.HWND]
+_user32.GetParent.restype = wintypes.HWND
+_user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+_user32.GetAncestor.restype = wintypes.HWND
+if ctypes.sizeof(ctypes.c_void_p) == 4:
+    _user32.GetWindowLongPtrW = _user32.GetWindowLongW
+    _user32.SetWindowLongPtrW = _user32.SetWindowLongW
+_user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+_user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+_user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+_user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+_user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+_user32.GetWindowLongW.restype = wintypes.LONG
+_user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]
+_user32.SetWindowLongW.restype = wintypes.LONG
+_user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                               ctypes.c_int, ctypes.c_int, wintypes.UINT]
+_user32.SetWindowPos.restype = wintypes.BOOL
+_user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+_user32.SetForegroundWindow.restype = wintypes.BOOL
+
 def get_resource_path(relative_path):
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
