@@ -99,7 +99,7 @@ class GlossaryManager:
         else:
             self.glossary_path = glossary_path
 
-        self._last_mtime = 0
+        self._last_mtime = None
         self._rules = []
         self._ensure_file_exists()
         self.reload()
@@ -121,10 +121,9 @@ class GlossaryManager:
 
         try:
             mtime = os.path.getmtime(self.glossary_path)
-            if mtime == self._last_mtime and self._rules:
+            if self._last_mtime is not None and mtime == self._last_mtime:
                 return
 
-            self._last_mtime = mtime
             rules = []
 
             with open(self.glossary_path, "r", encoding="utf-8") as f:
@@ -152,6 +151,7 @@ class GlossaryManager:
                 compiled_rules.append((regex, replacement))
 
             self._rules = compiled_rules
+            self._last_mtime = mtime
             print(f"[Glossary] Loaded {len(self._rules)} rules from {self.glossary_path}")
         except Exception as e:
             print(f"[Glossary] Error reading glossary file: {e}")

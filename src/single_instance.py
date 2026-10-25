@@ -1,5 +1,4 @@
 import ctypes
-import sys
 
 # Windows constants
 ERROR_ALREADY_EXISTS = 183
@@ -24,12 +23,13 @@ def check_single_instance(mutex_name="Local\\Shockwave_App_Mutex_v093"):
     try:
         kernel32 = ctypes.windll.kernel32
         # Create or open named mutex
-        _mutex_handle = kernel32.CreateMutexW(None, False, mutex_name)
+        handle = kernel32.CreateMutexW(None, False, mutex_name)
         last_error = kernel32.GetLastError()
         
         if last_error == ERROR_ALREADY_EXISTS:
-            _mutex_handle = None
+            kernel32.CloseHandle(handle)
             return False
+        _mutex_handle = handle
         return True
     except Exception as e:
         print(f"Single instance mutex notice: {e}")

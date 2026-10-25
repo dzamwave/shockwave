@@ -1,7 +1,6 @@
 import tkinter as tk
 import queue
 import os
-import sys
 import math
 import time
 import winsound
@@ -32,17 +31,8 @@ _user32.SetWindowPos.restype = wintypes.BOOL
 _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
 _user32.SetForegroundWindow.restype = wintypes.BOOL
 
-def get_resource_path(relative_path):
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
-    root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    candidate = os.path.join(root_path, relative_path)
-    if os.path.exists(candidate):
-        return candidate
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
-
 def play_ready_sound():
-    sound_path = get_resource_path(os.path.join("alert", "ready.wav"))
+    sound_path = config.get_resource_path(os.path.join("alert", "ready.wav"))
     if os.path.exists(sound_path):
         try:
             winsound.PlaySound(sound_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
@@ -50,7 +40,7 @@ def play_ready_sound():
             print(f"Audio playback error: {e}")
 
 def play_startup_sound():
-    sound_path = get_resource_path(os.path.join("alert", "megatron.wav"))
+    sound_path = config.get_resource_path(os.path.join("alert", "megatron.wav"))
     if os.path.exists(sound_path):
         try:
             winsound.PlaySound(sound_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
@@ -69,7 +59,7 @@ class WinVoiceUI:
         self.root.withdraw()
         
         # Set window icon (used by Alt-Tab and title bar if visible)
-        icon_path = get_resource_path(os.path.join("icons", "icon.ico"))
+        icon_path = config.get_resource_path(os.path.join("icons", "icon.ico"))
         if os.path.exists(icon_path):
             try:
                 self.root.iconbitmap(icon_path)
@@ -102,7 +92,6 @@ class WinVoiceUI:
         # Shockwave deep royal purple palette (configurable via .env)
         self.COLOR_BG = getattr(config, "UI_BG_COLOR", "#3b274d")
         self.COLOR_GRIP = getattr(config, "UI_GRIP_COLOR", "#2c1c3b")
-        self.COLOR_GRIP_HOVER = "#4c3363"
         self.COLOR_TEXT = "#ffffff"
         self.COLOR_MUTED = "#c4b0d9"
         
@@ -110,7 +99,6 @@ class WinVoiceUI:
         self.COLOR_INACTIVE_OUTLINE = "#FFD700"
         self.COLOR_HOVER_FILL = "#53376e"
         self.COLOR_HOVER_OUTLINE = "#FFF59D"
-        self.COLOR_ACTIVE_FILL = "#FFD700"
         self.COLOR_ACTIVE_OUTLINE = "#FFD700"
         
         self.root.configure(bg=self.COLOR_BG)
@@ -118,17 +106,36 @@ class WinVoiceUI:
         # Dragging handlers (allows grabbing anywhere on the widget bar)
         self._drag_offset_x = 0
         self._drag_offset_y = 0
+        self._drag_widget = None
+        self._drag_surfaces = set()
         
         def start_drag(event):
+            # A toplevel binding also receives events from child controls.
+            # Only a press on a background surface can begin a drag gesture.
+            if event.widget not in self._drag_surfaces:
+                self._drag_widget = None
+                return
+            self._drag_widget = event.widget
             self._drag_offset_x = event.x_root - self.root.winfo_x()
             self._drag_offset_y = event.y_root - self.root.winfo_y()
             
         def do_drag(event):
+            if self._drag_widget is None or event.widget is not self._drag_widget:
+                return
             x = event.x_root - self._drag_offset_x
             y = event.y_root - self._drag_offset_y
             self.root.geometry(f"+{x}+{y}")
             
-        self.make_draggable = lambda w: (w.bind("<Button-1>", start_drag, add="+"), w.bind("<B1-Motion>", do_drag, add="+"))
+        def stop_drag(event):
+            self._drag_widget = None
+
+        def make_draggable(widget):
+            self._drag_surfaces.add(widget)
+            widget.bind("<Button-1>", start_drag, add="+")
+            widget.bind("<B1-Motion>", do_drag, add="+")
+            widget.bind("<ButtonRelease-1>", stop_drag, add="+")
+
+        self.make_draggable = make_draggable
             
         # --- 1. Fixed Shockwave Radar Matrix Column (32px) ---
         self.eye_frame = tk.Frame(self.root, bg=self.COLOR_BG, width=44)
@@ -335,6 +342,9 @@ class WinVoiceUI:
         self.ai_task_enabled = getattr(config, "AI_TASK_MODE", False)
         def toggle_ai_task():
             self.ai_task_enabled = self.use_ai_task_var.get()
+            if self.ai_task_enabled and getattr(self, "idea_enabled", False):
+                self.idea_enabled = False
+                self.use_idea_var.set(False)
 
         self.use_ai_task_var = tk.BooleanVar(value=self.ai_task_enabled)
         self.chk_ai_task = tk.Checkbutton(
@@ -396,7 +406,7 @@ class WinVoiceUI:
             cursor="hand2",
             padx=0
         )
-        self.chk_to_en.grid(row=0, column=2, sticky="w", pady=(0, 2))
+        self.chk_to_en.grid(row=0, column=2, sticky="w", padx=(0, 8), pady=(0, 2))
 
         # Row 1, Col 2: Clip+ checkbox (aligned strictly under to EN)
         self.clip_prepend_enabled = getattr(config, "CLIP_PREPEND", False)
@@ -418,7 +428,37 @@ class WinVoiceUI:
             cursor="hand2",
             padx=0
         )
-        self.chk_clip.grid(row=1, column=2, sticky="w")
+        self.chk_clip.grid(row=1, column=2, sticky="w", padx=(0, 8))
+
+        # --- Column 3 ---
+        # Row 0, Col 3: Idea checkbox
+        self.idea_enabled = getattr(config, "IDEA_MODE", False)
+        if self.idea_enabled and self.ai_task_enabled:
+            self.ai_task_enabled = False
+            self.use_ai_task_var.set(False)
+
+        def toggle_idea():
+            self.idea_enabled = self.use_idea_var.get()
+            if self.idea_enabled and self.ai_task_enabled:
+                self.ai_task_enabled = False
+                self.use_ai_task_var.set(False)
+
+        self.use_idea_var = tk.BooleanVar(value=self.idea_enabled)
+        self.chk_idea = tk.Checkbutton(
+            self.controls_frame,
+            text="Idea",
+            variable=self.use_idea_var,
+            command=toggle_idea,
+            bg=self.COLOR_BG,
+            fg=self.COLOR_MUTED,
+            selectcolor=self.COLOR_GRIP,
+            activebackground=self.COLOR_BG,
+            activeforeground="#ffffff",
+            font=("Segoe UI", 8),
+            cursor="hand2",
+            padx=0
+        )
+        self.chk_idea.grid(row=0, column=3, sticky="w", pady=(0, 2))
         
         # Close button in top-right: exits application
         def on_close(event=None):
@@ -435,7 +475,7 @@ class WinVoiceUI:
             
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        width = 315
+        width = 370
         height = 80
         
         if position == "bottom-right":
@@ -621,7 +661,7 @@ class WinVoiceUI:
     def get_window_hwnd(self):
         try:
             wid = self.root.winfo_id()
-            hwnd = ctypes.windll.user32.GetAncestor(wid, 3)  # GA_ROOT = 3
+            hwnd = ctypes.windll.user32.GetAncestor(wid, 2)  # GA_ROOT
             if not hwnd:
                 hwnd = ctypes.windll.user32.GetParent(wid)
             return hwnd if hwnd else wid

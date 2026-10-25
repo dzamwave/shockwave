@@ -42,7 +42,7 @@ WAKE = load_module("test_wake", "wake_word.py", {"vosk": types.ModuleType("vosk"
 
 deps = {"audio_engine": AUDIO, "wake_word": WAKE}
 for name, attributes in {
-    "ui": ["WinVoiceUI", "get_resource_path", "play_ready_sound"],
+    "ui": ["WinVoiceUI", "play_ready_sound"],
     "llm_normalizer": ["LLMNormalizer"],
     "typer": ["Typer"],
     "hotkey_manager": ["SystemHotkeyManager"],
@@ -196,12 +196,23 @@ class LifecycleTests(unittest.TestCase):
             if not proceed.wait(2):
                 raise RuntimeError("test startup gate timed out")
 
-        self.audio.preload_model_async = slow_preload
+        def start_recording():
+            self.audio.audio_data = [np.ones((8, 1), dtype=np.float32)]
+            self.audio.is_recording = True
+            entered.set()
+            if not proceed.wait(2):
+                raise RuntimeError("test startup gate timed out")
+
+        self.audio.start_recording = start_recording
+        seen = []
+        self.audio.transcribe = lambda: seen.append(len(self.audio.audio_data)) or "надиктованный текст"
         self.app.toggle_recording()
         self.assertTrue(entered.wait(2))
         self.app.toggle_recording()
         proceed.set()
         self.threads.join()
+        self.assertEqual(seen, [1])
+        self.assertEqual(self.copied, ["надиктованный текст"])
         self.assertFalse(self.audio.is_recording)
         self.assertFalse(any(stream.active for stream in self.streams))
         self.assertFalse(self.app.is_processing)
@@ -263,9 +274,10 @@ class LifecycleTests(unittest.TestCase):
         self.app.ui.clip_prepend_enabled = True
         self.app.glossary.apply = lambda text: "исправленный текст"
 
-        def normalize(text, translate_en, ai_task):
+        def normalize(text, translate_en, ai_task, **kwargs):
             self.assertEqual(text, "исправленный текст")
             self.assertTrue(translate_en and ai_task)
+            self.assertFalse(kwargs.get("idea"))
             return types.SimpleNamespace(text="normalized text", succeeded=True, warning="")
 
         self.app.llm = types.SimpleNamespace(normalize_result=normalize)
@@ -592,6 +604,53 @@ class WakeLifecycleTests(unittest.TestCase):
         self.assertTrue(self.wake._is_listening_mic)
         self.assertIs(self.wake.stream, new_stream)
         self.wake.pause_mic()
+
+
+class WakeRecognitionTests(unittest.TestCase):
+    def _recognizer(self, partial):
+        class Recognizer:
+            def __init__(self):
+                self.fed = []
+
+            def AcceptWaveform(self, data):
+                self.fed.append(data)
+                return False
+
+            def PartialResult(self):
+                return '{"partial": "%s"}' % partial
+
+            def Result(self):
+                return '{"text": ""}'
+
+            def Reset(self):
+                pass
+
+        return Recognizer()
+
+    def test_cooldown_still_feeds_the_recognizer(self):
+        wake = WAKE.WakeWordDetector(keyword="шоквейв")
+        wake.recognizer = self._recognizer("шоквейв")
+        started = wake._last_trigger_time = time.time()
+        wake._process_pcm(b"pcm")
+        self.assertEqual(wake.recognizer.fed, [b"pcm"])
+        self.assertEqual(wake._last_trigger_time, started)
+
+    def test_partial_matches_a_multiword_phrase(self):
+        hit = threading.Event()
+        wake = WAKE.WakeWordDetector(on_wake_callback=hit.set, keyword="тайгер трейд")
+        wake.recognizer = self._recognizer("это тайгер трейд")
+        wake._process_pcm(b"pcm")
+        self.assertTrue(hit.wait(1))
+
+    def test_microphone_callback_returns_without_recognition(self):
+        wake = WAKE.WakeWordDetector()
+        wake._is_enabled = True
+        wake._is_listening_mic = True
+        wake._process_pcm = lambda data: time.sleep(0.4)
+        started = time.monotonic()
+        wake._audio_callback(b"audio", 0, None, None)
+        self.assertLess(time.monotonic() - started, 0.2)
+        wake.disable()
 
 
 if __name__ == "__main__":

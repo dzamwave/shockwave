@@ -1,7 +1,6 @@
 import ctypes
 import ctypes.wintypes
 import threading
-import time
 
 # Win32 Constants
 MOD_ALT = 0x0001
@@ -83,6 +82,8 @@ class SystemHotkeyManager:
         self._hotkey_id = 1001
         self._thread = None
         self._method = None        # "register" or "keyboard"
+        self._method_lock = threading.Lock()
+        self._register_ready = threading.Event()
         self._keyboard_hook = None
 
         self._start()
@@ -98,13 +99,23 @@ class SystemHotkeyManager:
 
     def _start_register_hotkey(self):
         self._running = True
+        self._register_ready.clear()
         self._thread = threading.Thread(target=self._register_msg_loop, daemon=True)
         self._thread.start()
-        # Give the thread a moment to register and report
-        time.sleep(0.15)
-        if self._method != "register":
-            # Registration failed, fallback
-            self._start_keyboard_fallback()
+        if not self._register_ready.wait(2.0):
+            print("[Hotkey] RegisterHotKey did not answer. Will use fallback.")
+        with self._method_lock:
+            if self._method != "register":
+                self._start_keyboard_fallback()
+
+    def _claim_register(self):
+        """Keep a single hook. A late Win32 success must not join the keyboard fallback."""
+        with self._method_lock:
+            if self._method == "keyboard":
+                _user32.UnregisterHotKey(None, self._hotkey_id)
+                return False
+            self._method = "register"
+            return True
 
     def _register_msg_loop(self):
         self._thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
@@ -112,6 +123,7 @@ class SystemHotkeyManager:
         modifiers, vk = parse_hotkey_string(self.hotkey_str)
         if vk == 0:
             print("[Hotkey] Warning: Could not parse key from hotkey string.")
+            self._register_ready.set()
             return
 
         success = _user32.RegisterHotKey(None, self._hotkey_id, modifiers, vk)
@@ -120,13 +132,17 @@ class SystemHotkeyManager:
             modifiers_no_repeat = modifiers & ~MOD_NOREPEAT
             success = _user32.RegisterHotKey(None, self._hotkey_id, modifiers_no_repeat, vk)
 
-        if success:
-            self._method = "register"
-            print(f"[Hotkey] Registered '{self.hotkey_str.upper()}' via Win32 RegisterHotKey (rock-solid).")
-        else:
+        if not success:
             err = ctypes.GetLastError()
             print(f"[Hotkey] RegisterHotKey failed for '{self.hotkey_str.upper()}' (error {err}). Will use fallback.")
+            self._register_ready.set()
             return
+
+        if not self._claim_register():
+            self._register_ready.set()
+            return
+        print(f"[Hotkey] Registered '{self.hotkey_str.upper()}' via Win32 RegisterHotKey (rock-solid).")
+        self._register_ready.set()
 
         msg = ctypes.wintypes.MSG()
         while self._running:

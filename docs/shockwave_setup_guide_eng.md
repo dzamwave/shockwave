@@ -9,10 +9,8 @@
 1. **Download the prebuilt archive:**  
    Go to the **[GitHub Releases](https://github.com/mariobr0/shockwave/releases)** page and download **`Shockwave-v0.9.3-Portable.zip`**.
 2. **Extract the archive** to any folder (e.g., `C:\Shockwave`).
-3. **Run `Shockwave.exe`**:
-   * Press **`4`** (`Download / Verify STT Models`) to let the app download Whisper or GigaAM models into the local `models/` folder.
-   * Press **`2`** (`Configure API Key & LLM`) if you wish to enable smart punctuation and formatting via an LLM.
-4. Press **`1. Start Shockwave`** — the control panel will minimize to the Windows system tray (near clock), and the purple floating widget will appear.
+3. **Edit `config.ini`** in the `config` folder: engine, wake word, hotkey, and the `[LLM]` section.
+4. **Run `Shockwave.exe`**. If the selected model is missing, the program offers to download that model and does not change settings. The console then minimizes to the system tray (near the clock), and the purple widget appears.
 5. Press **`Ctrl + Space`** in any application to start recording, and press it again to finish. Dictate your speech and paste the result (`Ctrl + V`).
 
 ---
@@ -61,14 +59,14 @@ If LLM processing fails or returns empty or truncated text, the transcript from 
 
 ## 🎛️ Configuration via `config.ini`
 
-User preferences belong in `config.ini` (template: `config.ini.example`). Engine, wake word and language choices made in the menu are saved here. Legacy `.env` preferences remain a fallback when the corresponding setting is absent from `config.ini`. The API key and LLM connection settings remain in `.env`.
+All settings belong in `config/config.ini` (template: `config/config.example.ini`; the working file is hidden from Git). Startup does not change them. A blank `[LLM]` value is read from `.env`. Older recognition values from `.env` are used only when that setting is absent from `config.ini`.
 
-* `[Interface] hotkey = ctrl+space` — global system hotkey.
+* `[Recording] hotkey = ctrl+space` — global system hotkey.
 * `[Recognition] whisper_language = ru` — Whisper language (`ru`, `auto`, `en`, etc.).
 * `[Recognition] gigaam_quantization = int8` — compressed model; `float32` selects full precision. Matching model files must be downloaded.
-* `[Interface] position = bottom-left` — initial widget position.
-* `[Interface] opacity = 0.80` — widget opacity.
-* `[Toggles] alert_sound = true` — sound notifications.
+* `[Widget] position = bottom-left` — initial widget position.
+* `[Widget] opacity = 0.80` — widget opacity.
+* `[Sound] alert_sound = true` — sound notifications.
 
 Write each bracketed section heading on its own line, followed by its settings, as shown in the template. An empty Vosk folder, including one containing only `.gitkeep`, is populated automatically. An incomplete folder containing other files is reported and preserved.
 

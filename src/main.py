@@ -8,7 +8,7 @@ from datetime import datetime
 
 import config
 
-from ui import WinVoiceUI, get_resource_path, play_ready_sound
+from ui import WinVoiceUI, play_ready_sound
 from audio_engine import AudioEngine
 from llm_normalizer import LLMNormalizer
 from typer import Typer
@@ -19,14 +19,13 @@ from wake_word import WakeWordDetector
 from glossary import GlossaryManager
 
 class WinVoiceApp:
-    def __init__(self, is_silent=False):
+    def __init__(self):
         # 1. Single-Instance Protection: Prevent multiple instances running simultaneously
         if not check_single_instance():
             print("\n[Shockwave] Программа уже запущена! / Shockwave is already running!")
             time.sleep(1.5)
             sys.exit(0)
-            
-        self.is_silent = is_silent
+
         self.q = queue.Queue()
         self.audio = AudioEngine()
         self.llm = LLMNormalizer()
@@ -61,7 +60,7 @@ class WinVoiceApp:
             print("[Shockwave] Wake word detection is disabled in config. Vosk model not loaded.")
         
         # 3. System Tray Manager: Place Shockwave icon next to clock with toggle & exit menu
-        icon_path = get_resource_path(os.path.join("icons", "icon.ico"))
+        icon_path = config.get_resource_path(os.path.join("icons", "icon.ico"))
         self.tray = SystemTrayManager(
             icon_path=icon_path,
             tooltip=f"Shockwave v{getattr(config, 'APP_VERSION', '1.0.0')}",
@@ -186,6 +185,9 @@ class WinVoiceApp:
             with self._audio_lock:
                 with self.lock:
                     if self._recording_id != rec_id or not self.is_recording or self._shutting_down:
+                        # Stop won before the microphone opened: this session has no samples.
+                        if self._recording_id == rec_id and not self._shutting_down:
+                            self.audio.audio_data = []
                         return
                 self.wake_detector.pause_mic()
                 if is_wake_word and self.ui.alert_enabled:
@@ -194,11 +196,13 @@ class WinVoiceApp:
                 print(f"\nStarted recording {start_time}. ", end="", flush=True)
                 self.audio.start_recording()
                 with self.lock:
-                    still_recording = (
-                        self._recording_id == rec_id and self.is_recording and not self._shutting_down
-                    )
-                if not still_recording:
+                    same_session = self._recording_id == rec_id and not self._shutting_down
+                    still_recording = same_session and self.is_recording
+                if not same_session:
                     self.audio.cancel_recording()
+                    return
+                if not still_recording:
+                    # Stop is already waiting to transcribe these samples.
                     return
             threading.Thread(target=self._recording_watchdog, args=(rec_id,), daemon=True).start()
         except Exception as e:
@@ -279,7 +283,7 @@ class WinVoiceApp:
             raw_text = processed_text
 
             # Check if LLM processing is requested by any mode toggle
-            needs_llm = self.ui.llm_enabled or self.ui.ai_task_enabled or self.ui.translate_en_enabled
+            needs_llm = self.ui.llm_enabled or self.ui.ai_task_enabled or self.ui.translate_en_enabled or getattr(self.ui, "idea_enabled", False)
             # If glossary processing failed, preserve the original instead of
             # applying further transformations and claiming it was saved unchanged.
             if needs_llm and not warnings:
@@ -288,7 +292,9 @@ class WinVoiceApp:
                     result = self.llm.normalize_result(
                         raw_text,
                         translate_en=self.ui.translate_en_enabled,
-                        ai_task=self.ui.ai_task_enabled
+                        ai_task=self.ui.ai_task_enabled,
+                        idea=getattr(self.ui, "idea_enabled", False),
+                        normalize=self.ui.llm_enabled,
                     )
                     final_text = result.text if result.succeeded else raw_text
                     if not result.succeeded:
@@ -350,12 +356,6 @@ class WinVoiceApp:
                     component.stop()
                 except Exception as e:
                     print(f"[Shockwave] {name} shutdown error: {e}")
-        temp_file = getattr(config, "AUDIO_TEMP_FILE", "")
-        if temp_file and os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except:
-                pass
         release_single_instance()
 
     def run(self):

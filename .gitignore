@@ -5,6 +5,10 @@ __pycache__/
 
 # Environment & Secrets
 .env
+config/.env
+**/.env
+config/config.ini
+.megamemory/
 
 # Build outputs & Executables
 dist/

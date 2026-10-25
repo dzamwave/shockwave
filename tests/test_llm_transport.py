@@ -18,6 +18,7 @@ CONFIG.STT_SYSTEM_PROMPT = "format transcript"
 CONFIG.DEFAULT_TRANSLATE_EN_PROMPT = "translate"
 CONFIG.DEFAULT_AI_TASK_PROMPT = "task"
 CONFIG.DEFAULT_AI_TASK_EN_PROMPT = "task in English"
+CONFIG.DEFAULT_IDEA_PROMPT = "idea prompt"
 
 path = pathlib.Path(__file__).resolve().parents[1] / "src" / "llm_normalizer.py"
 spec = importlib.util.spec_from_file_location("transport_normalizer", path)
@@ -70,6 +71,52 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(kwargs["json"]["messages"][1]["content"], "Raw transcript to process:\noriginal transcript")
         self.assertFalse(kwargs.get("allow_redirects", True))
         self.assertNotEqual(kwargs.get("verify"), False)
+
+    def test_idea_mode_sends_idea_prompt_and_extended_tokens(self):
+        CONFIG.LLM_ENDPOINT = "https://provider.example/v1/chat/completions"
+        self.assertEqual(self.normalizer.normalize("raw thoughts", idea=True), "Formatted transcript.")
+        kwargs = self.post.call_args.kwargs
+        self.assertEqual(kwargs["json"]["messages"][0]["content"], "idea prompt")
+        self.assertEqual(kwargs["json"]["max_tokens"], 2048)
+
+    def test_normalize_idea_and_english_run_in_that_order(self):
+        CONFIG.LLM_ENDPOINT = "https://provider.example/v1/chat/completions"
+        prompts = {"format transcript": "punctuated", "idea prompt": "structured", "translate": "english"}
+
+        def post(*args, **kwargs):
+            prompt = kwargs["json"]["messages"][0]["content"]
+            reply = Mock(ok=True, status_code=200)
+            reply.json.return_value = {
+                "choices": [{"message": {"content": prompts[prompt]}, "finish_reason": "stop"}]
+            }
+            return reply
+
+        self.post.side_effect = post
+        result = self.normalizer.normalize_result(
+            "raw thoughts", idea=True, translate_en=True, normalize=True)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.text, "english")
+        sent = [call.kwargs["json"]["messages"] for call in self.post.call_args_list]
+        self.assertEqual([item[0]["content"] for item in sent], ["format transcript", "idea prompt", "translate"])
+        self.assertIn("raw thoughts", sent[0][1]["content"])
+        self.assertIn("punctuated", sent[1][1]["content"])
+        self.assertIn("structured", sent[2][1]["content"])
+
+    def test_failed_translation_keeps_the_original_transcript(self):
+        CONFIG.LLM_ENDPOINT = "https://provider.example/v1/chat/completions"
+
+        def post(*args, **kwargs):
+            prompt = kwargs["json"]["messages"][0]["content"]
+            reason = "length" if prompt == "translate" else "stop"
+            content = "structured" if reason == "stop" else "cut"
+            reply = Mock(ok=True, status_code=200)
+            reply.json.return_value = {"choices": [{"message": {"content": content}, "finish_reason": reason}]}
+            return reply
+
+        self.post.side_effect = post
+        result = self.normalizer.normalize_result("raw thoughts", idea=True, translate_en=True)
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.text, "raw thoughts")
 
     def test_local_http_remains_available_without_api_key(self):
         CONFIG.LLM_API_KEY = ""

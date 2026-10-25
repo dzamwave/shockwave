@@ -38,15 +38,46 @@ def _validated_endpoint(value):
             raise ValueError("Внешний LLM-сервер требует HTTPS. HTTP разрешён только на этом компьютере.")
     return endpoint
 
-class LLMNormalizer:
-    def normalize(self, text, translate_en=False, ai_task=False):
-        """Keep the text-only API for callers that do not display processing status."""
-        return self.normalize_result(text, translate_en=translate_en, ai_task=ai_task).text
+def _processing_steps(translate_en, ai_task, idea, normalize):
+    """Idea runs after punctuation and before English. Other modes stay one request."""
+    if idea:
+        steps = []
+        if normalize:
+            steps.append("normalize")
+        steps.append("idea")
+        if translate_en:
+            steps.append("translate")
+        return steps
+    if translate_en and ai_task:
+        return ["ai_task_en"]
+    if ai_task:
+        return ["ai_task"]
+    if translate_en:
+        return ["translate"]
+    return ["normalize"]
 
-    def normalize_result(self, text, translate_en=False, ai_task=False):
+def _step_prompt(step):
+    if step == "idea":
+        return getattr(config, "LLM_PROMPT_IDEA", config.DEFAULT_IDEA_PROMPT), "Structuring idea", 2048
+    if step == "ai_task_en":
+        return getattr(config, "LLM_PROMPT_AI_TASK_EN", config.DEFAULT_AI_TASK_EN_PROMPT), "Generating AI task (EN)", 1024
+    if step == "ai_task":
+        return getattr(config, "LLM_PROMPT_AI_TASK", config.DEFAULT_AI_TASK_PROMPT), "Generating AI task", 1024
+    if step == "translate":
+        return getattr(config, "LLM_PROMPT_TRANSLATE_EN", config.DEFAULT_TRANSLATE_EN_PROMPT), "Translating to EN", 1024
+    return config.STT_SYSTEM_PROMPT, "Normalizing", 1024
+
+class LLMNormalizer:
+    def normalize(self, text, translate_en=False, ai_task=False, idea=False, normalize=False):
+        """Keep the text-only API for callers that do not display processing status."""
+        return self.normalize_result(
+            text, translate_en=translate_en, ai_task=ai_task, idea=idea, normalize=normalize
+        ).text
+
+    def normalize_result(self, text, translate_en=False, ai_task=False, idea=False, normalize=False):
         if not text:
             return NormalizationResult("", True)
-            
+
         red = "\033[38;2;231;76;60m"
         reset = "\033[0m"
 
@@ -59,29 +90,24 @@ class LLMNormalizer:
         except ValueError as e:
             print(f"{red}LLM: {e} Исходный текст сохранён.{reset}")
             return NormalizationResult(text, False, str(e))
-            
-        headers = {
-            "Content-Type": "application/json"
-        }
+
+        headers = {"Content-Type": "application/json"}
         if config.LLM_API_KEY:
             headers["Authorization"] = f"Bearer {config.LLM_API_KEY}"
-            
+
+        current = text
+        for step in _processing_steps(translate_en, ai_task, idea, normalize):
+            result = self._apply_step(endpoint, headers, current, step)
+            if not result.succeeded:
+                return NormalizationResult(text, False, result.warning)
+            current = result.text
+        return NormalizationResult(current, True)
+
+    def _apply_step(self, endpoint, headers, text, step):
+        red = "\033[38;2;231;76;60m"
+        reset = "\033[0m"
+        system_prompt, action_name, max_tokens = _step_prompt(step)
         user_prompt = f"Raw transcript to process:\n{text}"
-        
-        # Select active system prompt & status message based on mode toggles
-        if translate_en and ai_task:
-            system_prompt = getattr(config, "LLM_PROMPT_AI_TASK_EN", config.DEFAULT_AI_TASK_EN_PROMPT)
-            action_name = "Generating AI task (EN)"
-        elif ai_task:
-            system_prompt = getattr(config, "LLM_PROMPT_AI_TASK", config.DEFAULT_AI_TASK_PROMPT)
-            action_name = "Generating AI task"
-        elif translate_en:
-            system_prompt = getattr(config, "LLM_PROMPT_TRANSLATE_EN", config.DEFAULT_TRANSLATE_EN_PROMPT)
-            action_name = "Translating to EN"
-        else:
-            system_prompt = config.STT_SYSTEM_PROMPT
-            action_name = "Normalizing"
-        
         model_name = getattr(config, "LLM_MODEL", "gemini-2.5-flash-lite")
         payload = {
             "model": model_name,
@@ -89,10 +115,10 @@ class LLMNormalizer:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "max_tokens": 1024,
+            "max_tokens": max_tokens,
             "temperature": 0.1
         }
-        
+
         print(f"{action_name} with {model_name}... ", end="", flush=True)
         
         timeout_sec = getattr(config, "LLM_TIMEOUT", 25)

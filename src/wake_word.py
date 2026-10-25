@@ -21,15 +21,6 @@ except ImportError:
 
 import config
 
-def get_resource_path(relative_path):
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
-    root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    candidate = os.path.join(root_path, relative_path)
-    if os.path.exists(candidate):
-        return candidate
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
-
 def _valid_vosk_model(folder):
     required = ("am/final.mdl", "conf/mfcc.conf")
     graphs = (("graph/HCLr.fst", "graph/Gr.fst"), ("graph/HCLG.fst",))
@@ -140,8 +131,11 @@ class WakeWordDetector:
         self._lock = threading.Lock()
         self._stream_lock = threading.RLock()
         self._mic_paused = False
-        self._audio_q = queue.Queue()
-        
+        self._audio_q = queue.Queue(maxsize=50)
+        self._worker = None
+        self._worker_stop = threading.Event()
+        self._worker_lock = threading.Lock()
+
         # Deferred loading: Vosk model is loaded only when enable() / start_mic() is invoked.
 
     def _init_model(self):
@@ -155,7 +149,7 @@ class WakeWordDetector:
         if not candidate_path:
             return
         if not os.path.exists(candidate_path):
-            candidate_path = get_resource_path(candidate_path)
+            candidate_path = config.get_resource_path(candidate_path)
             
         if not os.path.exists(candidate_path):
             print(f"[WakeWord] Vosk model not found at {candidate_path}.")
@@ -172,26 +166,68 @@ class WakeWordDetector:
         except Exception as e:
             print(f"[WakeWord] Model init error: {e}")
 
-    def set_keyword(self, new_keyword):
-        """Dynamically updates the wake keyword."""
-        with self._lock:
-            self.keyword = new_keyword.strip().lower()
-            if self.recognizer:
-                self.recognizer.Reset()
-            print(f"[WakeWord] Detector reconfigured for keyword: '{self.keyword}'")
+    def _ensure_worker(self):
+        with self._worker_lock:
+            if not self._is_enabled:
+                return
+            if self._worker and self._worker.is_alive():
+                return
+            self._worker_stop.clear()
+            self._worker = threading.Thread(target=self._pcm_worker, name="wake-pcm", daemon=True)
+            self._worker.start()
+
+    def _stop_worker(self):
+        self._worker_stop.set()
+        try:
+            self._audio_q.put_nowait(None)
+        except queue.Full:
+            pass
+        worker = self._worker
+        if worker and worker.is_alive() and threading.current_thread() is not worker:
+            worker.join(timeout=1.0)
+        while True:
+            try:
+                self._audio_q.get_nowait()
+            except queue.Empty:
+                break
+
+    def _pcm_worker(self):
+        while not self._worker_stop.is_set():
+            try:
+                pcm_bytes = self._audio_q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if pcm_bytes:
+                self._process_pcm(pcm_bytes)
+
+    def _enqueue(self, pcm_bytes):
+        if not pcm_bytes:
+            return
+        self._ensure_worker()
+        try:
+            self._audio_q.put_nowait(pcm_bytes)
+        except queue.Full:
+            try:
+                self._audio_q.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                self._audio_q.put_nowait(pcm_bytes)
+            except queue.Full:
+                pass
 
     def _audio_callback(self, indata, frames, time_info, status):
         """Called by sounddevice.RawInputStream for each audio buffer."""
         if status:
             pass
         if self._is_listening_mic and self._is_enabled:
-            self._process_pcm(bytes(indata))
+            self._enqueue(bytes(indata))
 
     def feed_audio(self, pcm_data):
         """Allows feeding audio chunks directly from an external stream (e.g. AudioEngine)."""
         if not self._is_enabled or not self.recognizer:
             return
-            
+
         if isinstance(pcm_data, np.ndarray):
             # Convert float32 [-1.0, 1.0] to int16 bytes
             pcm_bytes = (pcm_data * 32767).astype(np.int16).tobytes()
@@ -199,19 +235,15 @@ class WakeWordDetector:
             pcm_bytes = bytes(pcm_data)
         else:
             return
-            
-        self._process_pcm(pcm_bytes)
+
+        self._enqueue(pcm_bytes)
 
     def _process_pcm(self, pcm_bytes):
         with self._lock:
             if not self.recognizer:
                 return
 
-            now = time.time()
-            # Anti-rebound cooldown: ignore hits within 2.0s of last trigger
-            if now - self._last_trigger_time < 2.0:
-                return
-
+            cooling = time.time() - self._last_trigger_time < 2.0
             detected = False
             kw_clean = self.keyword.strip().lower()
             pattern = r'(?:\b|^)' + re.escape(kw_clean) + r'(?:\b|$)'
@@ -219,25 +251,24 @@ class WakeWordDetector:
             if self.recognizer.AcceptWaveform(pcm_bytes):
                 res = json.loads(self.recognizer.Result())
                 text = res.get("text", "").lower().strip()
-                if text:
-                    words = text.split()
-                    if kw_clean in words or re.search(pattern, text):
-                        detected = True
+                if text and (kw_clean in text.split() or re.search(pattern, text)):
+                    detected = True
             else:
                 pres = json.loads(self.recognizer.PartialResult())
                 ptext = pres.get("partial", "").lower().strip()
-                if ptext:
-                    p_words = ptext.split()
-                    # Only match if the exact keyword appears as a standalone word
-                    if kw_clean in p_words:
-                        detected = True
+                if ptext and re.search(pattern, ptext):
+                    detected = True
 
-            if detected:
-                self._last_trigger_time = now
-                self.recognizer.Reset()
-                print(f"\n[WakeWord] Exact trigger word detected: '{self.keyword}'!")
-                if self.on_wake_callback:
-                    threading.Thread(target=self.on_wake_callback, daemon=True).start()
+            if not detected:
+                return
+            self.recognizer.Reset()
+            if cooling:
+                return
+            self._last_trigger_time = time.time()
+            print(f"\n[WakeWord] Exact trigger word detected: '{self.keyword}'!")
+            callback = self.on_wake_callback
+        if callback:
+            threading.Thread(target=callback, daemon=True).start()
 
     def start_mic(self):
         """Starts background microphone stream for wake word detection."""
@@ -323,6 +354,7 @@ class WakeWordDetector:
         with self._lock:
             self._is_enabled = True
             self._mic_paused = not start_mic
+        self._ensure_worker()
         if start_mic:
             threading.Thread(target=self.start_mic, daemon=True).start()
 
@@ -351,8 +383,6 @@ class WakeWordDetector:
         try:
             self.pause_mic()
         finally:
+            self._stop_worker()
             with self._stream_lock:
                 self.unload_model()
-
-    def is_enabled(self):
-        return self._is_enabled

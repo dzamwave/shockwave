@@ -74,24 +74,6 @@ class ModelSettingsTests(unittest.TestCase):
             absolute.side_effect = lambda value: str(self.folder / value) if value in ("config.ini", ".env", "glossary.txt") else absolute._mock_wraps(value)
             return load_source("settings_config", "config.py", {"dotenv": self.dotenv}, self.folder / "src" / "config.py")
 
-    def test_menu_engine_choice_survives_restart_and_preserves_other_settings(self):
-        with patch("builtins.input", side_effect=["1", ""]):
-            self.launcher.setup_stt("ru")
-        reloaded = self.reload_config()
-        self.assertEqual(reloaded.STT_ENGINE, "whisper")
-        self.assertEqual(reloaded.HOTKEY, "alt+space")
-        text = self.ini.read_text(encoding="utf-8")
-        self.assertIn("# user comment", text)
-        self.assertIn("user_setting = keep me", text)
-        self.assertIn("ai_task = Keep 100%% of data", text)
-        self.assertEqual(self.secret_writes, [])
-
-    def test_wake_word_menu_saves_ini_without_writing_secrets(self):
-        with patch("builtins.input", side_effect=["Шоквейв", ""]):
-            self.launcher.setup_wake_word("ru")
-        self.assertEqual(self.reload_config().WAKE_WORD, "шоквейв")
-        self.assertEqual(self.secret_writes, [])
-
     def test_save_failure_keeps_file_and_active_setting(self):
         original = self.ini.read_bytes()
         with patch("os.replace", side_effect=PermissionError("fictional write failure")):
@@ -110,17 +92,51 @@ class ModelSettingsTests(unittest.TestCase):
         self.config.save_setting("APP_LANGUAGE", "en")
         self.assertEqual(self.reload_config().APP_LANGUAGE, "en")
 
-    def test_language_menu_choice_survives_restart(self):
-        with (
-            patch.object(self.launcher, "ensure_env_exists"),
-            patch.object(self.launcher, "clear_screen"),
-            patch.object(self.launcher, "print_banner"),
-            patch("builtins.input", side_effect=["6", "7"]),
-        ):
-            with self.assertRaises(SystemExit):
-                self.launcher.menu()
-        self.assertEqual(self.reload_config().APP_LANGUAGE, "en")
-        self.assertEqual(self.secret_writes, [])
+    def test_engine_names_the_model_setting(self):
+        self.ini.write_text("[Recognition]\nengine = whisper_model\n", encoding="utf-8")
+        self.assertEqual(self.reload_config().STT_ENGINE, "whisper")
+        self.ini.write_text("[Recognition]\nengine = gigaam_model\n", encoding="utf-8")
+        self.assertEqual(self.reload_config().STT_ENGINE, "gigaam")
+
+    def test_grouped_sections_keep_current_values(self):
+        self.ini.write_text(
+            "[Recording]\nhotkey = f9\nmax_record_seconds = 20\nwarn_record_seconds = 10\n"
+            "[Wake]\nwake = false\nwake_word = пример\n"
+            "[Text]\nllm_norm = true\nidea = true\n"
+            "[Widget]\nposition = top-center\nopacity = 0.5\nui_bg_color = #112233\n"
+            "[Sound]\nalert_sound = false\n"
+            "[Console]\nlanguage = en\ncli_banner_pad = 1\n",
+            encoding="utf-8",
+        )
+        reloaded = self.reload_config()
+        self.assertEqual(reloaded.HOTKEY, "f9")
+        self.assertEqual(reloaded.MAX_RECORD_SECONDS, 20)
+        self.assertEqual(reloaded.WARN_RECORD_SECONDS, 10)
+        self.assertFalse(reloaded.WAKE_WORD_ENABLED)
+        self.assertEqual(reloaded.WAKE_WORD, "пример")
+        self.assertTrue(reloaded.LLM_NORM)
+        self.assertTrue(reloaded.IDEA_MODE)
+        self.assertEqual(reloaded.UI_POSITION, "top-center")
+        self.assertEqual(reloaded.UI_OPACITY, 0.5)
+        self.assertEqual(reloaded.UI_BG_COLOR, "#112233")
+        self.assertFalse(reloaded.ALERT_SOUND)
+        self.assertEqual(reloaded.APP_LANGUAGE, "en")
+        self.assertEqual(reloaded.CLI_BANNER_PAD, 1)
+
+    def test_llm_ini_overrides_environment_and_blank_key_keeps_env(self):
+        self.ini.write_text(
+            "[LLM]\nendpoint = https://example.test/v1\nmodel = demo-model\ntimeout = 9\napi_key =\n",
+            encoding="utf-8",
+        )
+        os.environ["LLM_ENDPOINT"] = "https://old.example"
+        os.environ["LLM_MODEL"] = "old-model"
+        os.environ["LLM_API_KEY"] = "secret-from-env"
+        os.environ["LLM_TIMEOUT"] = "30"
+        reloaded = self.reload_config()
+        self.assertEqual(reloaded.LLM_ENDPOINT, "https://example.test/v1")
+        self.assertEqual(reloaded.LLM_MODEL, "demo-model")
+        self.assertEqual(reloaded.LLM_TIMEOUT, 9)
+        self.assertEqual(reloaded.LLM_API_KEY, "secret-from-env")
 
     def test_save_preserves_crlf_comments_and_multiline_prompts(self):
         content = "[Recognition]\r\nengine = gigaam\r\n# user note\r\n[Prompts]\r\nai_task = first\r\n    second\r\n"
@@ -175,19 +191,34 @@ class ModelSettingsTests(unittest.TestCase):
             patch.object(self.manager, "is_gigaam_downloaded", return_value=True),
             patch.object(self.manager, "is_whisper_downloaded", side_effect=AssertionError("wrong engine checked")),
         ):
-            self.manager.check_and_prompt(auto_start=False)
+            self.manager.ensure_configured_model()
 
-    def test_full_gigaam_choice_is_explicit_and_survives_restart(self):
+    def test_missing_model_downloads_configured_precision_without_rewriting_settings(self):
+        original = self.ini.read_bytes()
+        self.config.STT_ENGINE = "gigaam"
+        self.config.GIGAAM_MODEL = "gigaam-v3-e2e-rnnt"
+        self.config.GIGAAM_QUANTIZATION = "float32"
         downloads = []
         with (
             patch.object(self.manager, "is_gigaam_downloaded", return_value=False),
-            patch.object(self.manager, "download_gigaam_direct", side_effect=lambda model, **kwargs: downloads.append(kwargs)),
-            patch("builtins.input", side_effect=["2", "2"]),
+            patch.object(self.manager, "download_gigaam_direct", side_effect=lambda model, **kwargs: downloads.append((model, kwargs))),
+            patch("builtins.input", return_value="y"),
         ):
-            self.manager.check_and_prompt(auto_start=False)
-        self.assertEqual(self.reload_config().GIGAAM_QUANTIZATION, "float32")
-        self.assertEqual(downloads[0]["quant"], "float32")
+            self.manager.ensure_configured_model()
+        self.assertEqual(downloads, [("gigaam-v3-e2e-rnnt", {"quant": "float32", "lang": "ru"})])
+        self.assertEqual(self.ini.read_bytes(), original)
         self.assertEqual(self.secret_writes, [])
+
+    def test_declined_download_exits_without_changing_settings(self):
+        original = self.ini.read_bytes()
+        with (
+            patch.object(self.manager, "is_gigaam_downloaded", return_value=False),
+            patch.object(self.manager, "download_gigaam_direct", side_effect=AssertionError("download")),
+            patch("builtins.input", return_value="n"),
+        ):
+            with self.assertRaises(SystemExit):
+                self.manager.ensure_configured_model()
+        self.assertEqual(self.ini.read_bytes(), original)
 
     def test_legacy_empty_quantization_remains_full_precision(self):
         self.ini.write_text("[Recognition]\ngigaam_quantization =\n", encoding="utf-8")

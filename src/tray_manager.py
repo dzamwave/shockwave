@@ -4,18 +4,8 @@ import threading
 import os
 import sys
 
-def get_resource_path(relative_path):
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
-    root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    candidate = os.path.join(root_path, relative_path)
-    if os.path.exists(candidate):
-        return candidate
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
-
 # Win32 Constants
 NIM_ADD = 0x00000000
-NIM_MODIFY = 0x00000001
 NIM_DELETE = 0x00000002
 
 NIF_MESSAGE = 0x00000001
@@ -188,39 +178,61 @@ shell32.Shell_NotifyIconW.restype = wintypes.BOOL
 ole32 = ctypes.oledll.ole32
 ole32.CoInitialize.argtypes = [ctypes.c_void_p]
 ole32.CoInitialize.restype = ctypes.c_long
+ole32.CoUninitialize.argtypes = []
+ole32.CoUninitialize.restype = None
 ole32.CoCreateInstance.argtypes = [ctypes.POINTER(GUID), ctypes.c_void_p, wintypes.DWORD,
                                  ctypes.POINTER(GUID), ctypes.POINTER(ctypes.POINTER(ITaskbarList))]
 ole32.CoCreateInstance.restype = ctypes.c_long
 
-def delete_taskbar_tab(hwnd):
-    """Removes the window's button/tab from the Windows taskbar."""
+_HR_INIT = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)
+
+def _taskbar_tab(hwnd, delete):
+    """ITaskbarList requires HrInit before AddTab or DeleteTab."""
     if not hwnd:
         return
+    started = False
+    taskbar = None
+    created = False
     try:
-        ole32 = ctypes.oledll.ole32
-        ole32.CoInitialize(None)
-        pTaskbarList = ctypes.POINTER(ITaskbarList)()
-        hr = ole32.CoCreateInstance(ctypes.byref(CLSID_TaskbarList), None, 1, ctypes.byref(IID_ITaskbarList), ctypes.byref(pTaskbarList))
-        if hr == 0 and pTaskbarList:
-            pTaskbarList.contents.lpVtbl.contents.DeleteTab(pTaskbarList, hwnd)
-            pTaskbarList.contents.lpVtbl.contents.Release(pTaskbarList)
+        hr = ole32.CoInitialize(None)
+        if hr not in (0, 1):
+            return
+        started = True
+        taskbar = ctypes.POINTER(ITaskbarList)()
+        hr = ole32.CoCreateInstance(
+            ctypes.byref(CLSID_TaskbarList), None, 1,
+            ctypes.byref(IID_ITaskbarList), ctypes.byref(taskbar))
+        if hr != 0 or not taskbar:
+            return
+        created = True
+        vtbl = taskbar.contents.lpVtbl.contents
+        if _HR_INIT(vtbl.HrInit)(taskbar) != 0:
+            return
+        if delete:
+            vtbl.DeleteTab(taskbar, hwnd)
+        else:
+            vtbl.AddTab(taskbar, hwnd)
     except Exception:
         pass
+    finally:
+        if created:
+            try:
+                taskbar.contents.lpVtbl.contents.Release(taskbar)
+            except Exception:
+                pass
+        if started:
+            try:
+                ole32.CoUninitialize()
+            except Exception:
+                pass
+
+def delete_taskbar_tab(hwnd):
+    """Removes the window's button/tab from the Windows taskbar."""
+    _taskbar_tab(hwnd, delete=True)
 
 def add_taskbar_tab(hwnd):
     """Restores the window's button/tab to the Windows taskbar."""
-    if not hwnd:
-        return
-    try:
-        ole32 = ctypes.oledll.ole32
-        ole32.CoInitialize(None)
-        pTaskbarList = ctypes.POINTER(ITaskbarList)()
-        hr = ole32.CoCreateInstance(ctypes.byref(CLSID_TaskbarList), None, 1, ctypes.byref(IID_ITaskbarList), ctypes.byref(pTaskbarList))
-        if hr == 0 and pTaskbarList:
-            pTaskbarList.contents.lpVtbl.contents.AddTab(pTaskbarList, hwnd)
-            pTaskbarList.contents.lpVtbl.contents.Release(pTaskbarList)
-    except Exception:
-        pass
+    _taskbar_tab(hwnd, delete=False)
 
 def get_root_console_hwnd():
     """Returns the top-level root window for the console (Windows Terminal or ConHost)."""

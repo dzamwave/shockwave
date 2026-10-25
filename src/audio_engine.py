@@ -1,6 +1,5 @@
 import numpy as np
 import sounddevice as sd
-import soundfile as sf
 import time
 import os
 import threading
@@ -10,12 +9,12 @@ import config
 import importlib.metadata
 _original_version = importlib.metadata.version
 def _safe_version(pkg_name):
-    if "onnx" in pkg_name or "asr" in pkg_name:
-        return "0.12.0"
     try:
         return _original_version(pkg_name)
     except importlib.metadata.PackageNotFoundError:
-        return "0.0.0"
+        if "onnx" in pkg_name or "asr" in pkg_name:
+            return "0.12.0"
+        raise
 importlib.metadata.version = _safe_version
 
 class AudioEngine:
@@ -220,7 +219,6 @@ class AudioEngine:
         finally:
             self.audio_data = []
             self._last_used_time = time.time()
-        print("Recording cancelled and audio buffer discarded.")
 
     def transcribe(self) -> str:
         model = self.get_or_load_model()

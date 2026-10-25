@@ -2,6 +2,7 @@
 import contextlib
 import importlib.util
 import io
+import os
 import pathlib
 import queue
 import tempfile
@@ -52,6 +53,15 @@ class ResponsePreservationTests(unittest.TestCase):
         self.assertTrue(result.succeeded)
         self.assertEqual(result.warning, "")
         self.assertEqual(self.post.call_args.kwargs["json"]["messages"][0]["content"], CONFIG.DEFAULT_AI_TASK_EN_PROMPT)
+
+    def test_valid_result_idea_mode_uses_idea_prompt_and_tokens(self):
+        CONFIG.DEFAULT_IDEA_PROMPT = "idea prompt"
+        result = self.normalizer.normalize_result(self.original, idea=True)
+        self.assertEqual(result.text, "edited")
+        self.assertTrue(result.succeeded)
+        payload = self.post.call_args.kwargs["json"]
+        self.assertEqual(payload["messages"][0]["content"], "idea prompt")
+        self.assertEqual(payload["max_tokens"], 2048)
 
     def test_bad_http_and_malformed_responses_preserve_original(self):
         for data in ({"choices": []}, {"choices": None}, {"choices": [{}]}, {"choices": [{"finish_reason": "stop", "message": {"content": " "}}]}, {"choices": [{"finish_reason": "stop", "message": {"content": ["not plain text"]}}]}):
@@ -169,6 +179,20 @@ class DictationPreservationTests(unittest.TestCase):
         self.assertNotIn({"cmd": "show_ready"}, self.messages())
 
 
+    def test_idea_toggle_passes_idea_mode_to_llm(self):
+        self.app.ui.idea_enabled = True
+        normalized = []
+        def normalize_result(text, **kwargs):
+            normalized.append((text, kwargs))
+            return types.SimpleNamespace(text="structured idea", succeeded=True, warning="")
+        self.app.llm = types.SimpleNamespace(normalize_result=normalize_result)
+        self.app.process_audio_thread()
+        self.copy.assert_called_once_with("structured idea", prepend_clipboard=False)
+        self.assertEqual(normalized, [(self.transcript, {
+            "translate_en": False, "ai_task": False, "idea": True, "normalize": False,
+        })])
+
+
 class GlossaryPreservationTests(unittest.TestCase):
     def test_backslashes_and_group_like_replacements_are_literal(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -177,6 +201,29 @@ class GlossaryPreservationTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 glossary = GLOSSARY.GlossaryManager(str(path))
                 self.assertEqual(glossary.apply("Логи и группа"), "C:\\logs и \\1\\name")
+
+    def test_failed_reread_does_not_stick(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = pathlib.Path(folder) / "glossary.txt"
+            path.write_text("слово = замена\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                glossary = GLOSSARY.GlossaryManager(str(path))
+            self.assertEqual(glossary.apply("слово"), "замена")
+            path.write_text("слово = новая\n", encoding="utf-8")
+            os.utime(path, (path.stat().st_atime, path.stat().st_mtime + 5))
+            real_open = open
+            failed = {"once": False}
+
+            def flaky(file, mode="r", *args, **kwargs):
+                if str(file) == str(path) and "r" in mode and not failed["once"]:
+                    failed["once"] = True
+                    raise OSError("busy")
+                return real_open(file, mode, *args, **kwargs)
+
+            with patch("builtins.open", flaky), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(glossary.apply("слово"), "замена")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(glossary.apply("слово"), "новая")
 
 
 if __name__ == "__main__":
