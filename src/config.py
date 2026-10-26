@@ -293,7 +293,7 @@ UI_GRIP_COLOR = get_setting("Widget", "ui_grip_color", "UI_GRIP_COLOR", default=
 
 # --- Console ---
 APP_LANGUAGE = get_setting("Console", "language", "APP_LANGUAGE", default="ru", aliases=[("Interface", "language")])
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 CLI_TITLE_COLOR = get_setting("Console", "cli_title_color", "CLI_TITLE_COLOR", default="#B45FEB", aliases=[("Theme", "cli_title_color")])
 CLI_QUOTE_COLOR = get_setting("Console", "cli_quote_color", "CLI_QUOTE_COLOR", default="#807785", aliases=[("Theme", "cli_quote_color")])
 CLI_BANNER_PAD = get_int("Console", "cli_banner_pad", "CLI_BANNER_PAD", default=3, aliases=[("Theme", "cli_banner_pad")])

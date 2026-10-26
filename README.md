@@ -96,7 +96,7 @@ Detailed guides are available below:
 ---
 
 <p align="center">
-  <img src="docs/control_panel.png?v=1.1.0" alt="Control Panel" width="753">
+  <img src="docs/control_panel.png?v=1.1.1" alt="Control Panel" width="753">
   <br><br>
-  <img src="docs/floating_widget.png?v=1.1.0" alt="Floating Widget" width="521">
+  <img src="docs/floating_widget.png?v=1.1.1" alt="Floating Widget" width="521">
 </p>

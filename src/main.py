@@ -63,7 +63,7 @@ class WinVoiceApp:
         icon_path = config.get_resource_path(os.path.join("icons", "icon.ico"))
         self.tray = SystemTrayManager(
             icon_path=icon_path,
-            tooltip=f"Shockwave v{getattr(config, 'APP_VERSION', '1.0.0')}",
+            tooltip=f"Shockwave v{getattr(config, 'APP_VERSION', '1.1.1')}",
             on_quit=self.quit_app,
             on_show_widget=self.show_widget_topmost
         )

@@ -3,7 +3,7 @@
 > **Локальный путь:** `C:\Users\dzam\Desktop\VibeCoding\Shockwave`  
 > **Стек:** Python 3.12, Faster-Whisper, Vosk, ONNX Runtime (GigaAM), SoundDevice, Win32 API (`RegisterHotKey`), PyInstaller  
 > **Интерпретатор:** `.\venv\Scripts\python.exe`  
-> **Версия приложения:** `1.1.0`  
+> **Версия приложения:** `1.1.1`  
 > **Конфигурация:** `config/config.ini` (рабочий файл, в gitignore), `config/config.example.ini` (шаблон с пустыми `endpoint`, `model`, `api_key`), `config/.env` (запас для пустых полей `[LLM]`), `config/prompts/*.md` (системные промпты)
 
 ---

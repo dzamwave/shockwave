@@ -7,7 +7,7 @@
 *Recommended for most users. No Python or additional software installation needed.*
 
 1. **Download the prebuilt archive:**
-   Go to the **[GitHub Releases](https://github.com/dzamwave/shockwave/releases)** page and download the latest **`Shockwave-v1.1.0-Portable.zip`**.
+   Go to the **[GitHub Releases](https://github.com/dzamwave/shockwave/releases)** page and download the latest **`Shockwave-v1.1.1-Windows-x64.zip`**.
 2. **Extract the archive** to any folder (e.g., `C:\Shockwave`).
 3. **Edit `config.ini`** in the `config` folder: engine, wake word, hotkey, and the `[LLM]` section.
 4. **Run `Shockwave.exe`**. If the selected model is missing, the program offers to download it and does not change settings. The console then minimizes to the system tray (near the clock), and the purple widget appears.
