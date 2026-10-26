@@ -32,7 +32,7 @@
 
 ## 2. Ключевые файлы (`src/` и корень)
 
-* `src/launcher.py` — Точка входа. Выводит ANSI-баннер, читает движок из `config.ini`, запускает `model_manager.ensure_configured_model()`, затем `main.WinVoiceApp`. Флаги `--widget` / `--silent` — бесшумный старт без баннера.
+* `src/launcher.py` — Точка входа. Выводит ANSI-баннер, читает движок из `config.ini`, запускает `model_manager.ensure_configured_model()`, затем `main.WinVoiceApp`.
 * `src/main.py` — Оркестратор: сборка компонентов, очередь UI-команд, обработка записи, LLM-пайплайн, буфер обмена, корректный выход с освобождением ресурсов.
 * `src/audio_engine.py` — Захват звука (`sounddevice`), буфер фреймов, ленивая загрузка/выгрузка STT-модели, idle watchdog, транскрипция Whisper и GigaAM.
 * `src/wake_word.py` — Vosk wake word: очередь аудио-чанков → фоновый поток распознавания → callback `on_wake_callback`. Методы `enable` / `disable` / `pause_mic` / `resume_mic`.
@@ -47,7 +47,7 @@
 * `src/single_instance.py` — Один запущенный процесс через именованный mutex Windows.
 * `start.bat` — Запуск из виртуального окружения.
 * `build.bat` — Сборка EXE через PyInstaller.
-* `make_shortcuts.py` — Создание `.lnk`-ярлыков (Shockwave.lnk, Shockwave-Widget.lnk).
+* `make_shortcuts.py` — Создание ярлыка `Shockwave.lnk`.
 
 ---
 
@@ -94,9 +94,6 @@
 start.bat
 # или
 python src/launcher.py
-
-# Сразу виджет, без приветствия в терминале
-python src/launcher.py --widget
 
 # Сборка дистрибутива
 build.bat

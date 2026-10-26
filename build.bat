@@ -18,9 +18,8 @@ echo.
 if exist "dist\Shockwave\Shockwave.exe" (
     python make_shortcuts.py
     echo =======================================================================
-    echo SUCCESS: Build completed! Two shortcuts are ready in the root:
-    echo  - Shockwave.lnk        : Control Panel with system tray minimization
-    echo  - Shockwave-Widget.lnk : Direct silent launch of the floating widget
+    echo SUCCESS: Build completed! Shortcut is ready in the root:
+    echo  - Shockwave.lnk : Control Panel with system tray minimization
     echo =======================================================================
 ) else (
     echo ERROR: Build failed. Please check the logs above.

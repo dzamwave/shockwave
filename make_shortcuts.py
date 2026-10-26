@@ -10,6 +10,12 @@ ico = os.path.join(root, "icons", "icon.ico,0")
 s1_path = os.path.join(root, "Shockwave.lnk")
 s2_path = os.path.join(root, "Shockwave-Widget.lnk")
 
+if os.path.exists(s2_path):
+    try:
+        os.remove(s2_path)
+    except Exception:
+        pass
+
 vbs_content = f"""
 Set oWS = CreateObject("WScript.Shell")
 Set oLink1 = oWS.CreateShortcut("{s1_path}")
@@ -17,13 +23,6 @@ oLink1.TargetPath = "{exe}"
 oLink1.WorkingDirectory = "{root}"
 oLink1.IconLocation = "{ico}"
 oLink1.Save
-
-Set oLink2 = oWS.CreateShortcut("{s2_path}")
-oLink2.TargetPath = "{exe}"
-oLink2.Arguments = "--widget"
-oLink2.WorkingDirectory = "{root}"
-oLink2.IconLocation = "{ico}"
-oLink2.Save
 """
 
 vbs_file = Path("make_shortcuts.vbs")

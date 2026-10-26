@@ -87,25 +87,11 @@ def start_app():
     sys.exit(0)
 
 if __name__ == "__main__":
-    # Direct silent widget launch via --widget / --silent argument
-    if "--widget" in sys.argv or "--silent" in sys.argv:
-        from tray_manager import hide_console
-        hide_console()
-
-        from single_instance import check_single_instance
-        if not check_single_instance():
-            sys.exit(0)
-
-        import main
-        app = main.WinVoiceApp()
-        app.run()
+    from single_instance import check_single_instance
+    if not check_single_instance():
+        print("\n[Shockwave] Программа уже запущена! / Shockwave is already running!\n")
+        import time
+        time.sleep(2.0)
         sys.exit(0)
-    else:
-        from single_instance import check_single_instance
-        if not check_single_instance():
-            print("\n[Shockwave] Программа уже запущена! / Shockwave is already running!\n")
-            import time
-            time.sleep(2.0)
-            sys.exit(0)
 
-        start_app()
+    start_app()

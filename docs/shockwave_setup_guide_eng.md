@@ -35,11 +35,9 @@ pip install -r requirements.txt
 ```
 
 ### 3. Build `.exe` or Run Directly
-* **Build standalone binary:** run **`build.bat`**. The build script generates a portable `dist\Shockwave.exe` and two desktop shortcuts:
-  1. **`Shockwave.lnk`** — Full launch with console, then auto-minimization to system tray.
-  2. **`Shockwave-Widget.lnk`** — Direct silent launch of the floating widget (no console banner).
+* **Build standalone binary:** run **`build.bat`**. The build script generates a portable `dist\Shockwave.exe` and a desktop shortcut:
+  * **`Shockwave.lnk`** — Launch with console, then auto-minimization to system tray.
 * **Direct Python launch:** run **`start.bat`** or `python src/launcher.py`.
-* **Silent widget launch:** `python src/launcher.py --widget`
 
 ---
 
